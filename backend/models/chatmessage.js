@@ -14,6 +14,17 @@ const chatMessageSchema = new mongoose.Schema(
     source: {
       type: String,
       default: "jikan"
+    },
+    ui: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {
+        type: "none",
+        data: {}
+      }
+    },
+    meta: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {}
     }
   },
   {
