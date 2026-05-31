@@ -127,8 +127,140 @@ export function isAnotherRecommendationRequest(message) {
   );
 }
 
+export function isCharacterListRequest(message) {
+  const text = message.toLowerCase().trim();
+
+  const patterns = [
+    /characters?\s+(in|from|of)\s+.+/i,
+    /cast\s+(in|from|of)\s+.+/i,
+    /main cast\s+(in|from|of)\s+.+/i,
+    /who are the characters\s+(in|from|of)\s+.+/i,
+    /show me characters\s+(in|from|of)\s+.+/i,
+    /show characters\s+(in|from|of)\s+.+/i
+  ];
+
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+export function extractCharacterAnimeTitle(message) {
+  const cleanMessage = message
+    .replace(/[?!.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const patterns = [
+    /characters?\s+(?:in|from|of)\s+(.+)/i,
+    /cast\s+(?:in|from|of)\s+(.+)/i,
+    /main cast\s+(?:in|from|of)\s+(.+)/i,
+    /who are the characters\s+(?:in|from|of)\s+(.+)/i,
+    /show me characters\s+(?:in|from|of)\s+(.+)/i,
+    /show characters\s+(?:in|from|of)\s+(.+)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleanMessage.match(pattern);
+
+    if (match && match[1]) {
+      return cleanCharacterAnimeTitle(match[1]);
+    }
+  }
+
+  return cleanCharacterAnimeTitle(cleanMessage);
+}
+
+export function isExplicitCharacterOverviewRequest(message) {
+  const text = message.toLowerCase().trim();
+
+  const patterns = [
+    /^tell me about character\s+.+/i,
+    /^tell me about the character\s+.+/i,
+    /^who is character\s+.+/i,
+    /^who is the character\s+.+/i,
+    /^explain character\s+.+/i,
+    /^character overview of\s+.+/i,
+    /^character details? about\s+.+/i,
+    /^details? about character\s+.+/i,
+    /^what is character\s+.+/i
+  ];
+
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+export function extractCharacterName(message) {
+  const cleanMessage = message
+    .replace(/[?!.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const patterns = [
+    /tell me about character\s+(.+)/i,
+    /tell me about the character\s+(.+)/i,
+    /who is character\s+(.+)/i,
+    /who is the character\s+(.+)/i,
+    /explain character\s+(.+)/i,
+    /character overview of\s+(.+)/i,
+    /character details? about\s+(.+)/i,
+    /details? about character\s+(.+)/i,
+    /what is character\s+(.+)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleanMessage.match(pattern);
+
+    if (match && match[1]) {
+      return cleanCharacterName(match[1]);
+    }
+  }
+
+  return cleanCharacterName(cleanMessage);
+}
+
+export function isExplicitAnimeOverviewRequest(message) {
+  const text = message.toLowerCase().trim();
+
+  const patterns = [
+    /^tell me about anime\s+.+/i,
+    /^tell me about the anime\s+.+/i,
+    /^anime overview of\s+.+/i,
+    /^overview of anime\s+.+/i,
+    /^details? about anime\s+.+/i,
+    /^what is anime\s+.+/i
+  ];
+
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+export function extractExplicitAnimeOverviewTitle(message) {
+  const cleanMessage = message
+    .replace(/[?!.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleanMessage
+    .replace(/^tell me about the anime\s+/i, "")
+    .replace(/^tell me about anime\s+/i, "")
+    .replace(/^anime overview of\s+/i, "")
+    .replace(/^overview of anime\s+/i, "")
+    .replace(/^details? about anime\s+/i, "")
+    .replace(/^what is anime\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function isOverviewRequest(message) {
-  const text = message.toLowerCase();
+  const text = message.toLowerCase().trim();
+
+  const badOverviewPhrases = [
+    "what is a good",
+    "what are good",
+    "what is the best",
+    "what are the best",
+    "what should i watch"
+  ];
+
+  if (badOverviewPhrases.some((phrase) => text.includes(phrase))) {
+    return false;
+  }
 
   const overviewPatterns = [
     /^tell me about\s+.+/i,
@@ -140,7 +272,7 @@ export function isOverviewRequest(message) {
     /^explain\s+.+/i
   ];
 
-  return overviewPatterns.some((pattern) => pattern.test(text.trim()));
+  return overviewPatterns.some((pattern) => pattern.test(text));
 }
 
 export function extractOverviewTitle(message) {
@@ -239,12 +371,23 @@ export function parseAnimeRequest(message) {
   const tag = extractAnimeTag(message);
   const seasonIntent = extractSeasonIntent(message);
   const rankingIntent = extractRankingIntent(message);
-  const wantsOverview = isOverviewRequest(message);
+
   const wantsAnother = isAnotherRecommendationRequest(message);
+  const wantsCharacterList = isCharacterListRequest(message);
+  const wantsExplicitCharacterOverview =
+    isExplicitCharacterOverviewRequest(message);
+  const wantsExplicitAnimeOverview = isExplicitAnimeOverviewRequest(message);
+  const wantsOverview = isOverviewRequest(message);
 
   let intent = "search";
 
-  if (wantsOverview) {
+  if (wantsCharacterList) {
+    intent = "characters";
+  } else if (wantsExplicitCharacterOverview) {
+    intent = "character_overview";
+  } else if (wantsExplicitAnimeOverview) {
+    intent = "anime_overview";
+  } else if (wantsOverview) {
     intent = "overview";
   } else if (seasonIntent) {
     intent = seasonIntent.type === "year" ? "year" : "season";
@@ -254,16 +397,44 @@ export function parseAnimeRequest(message) {
     intent = "recommendation";
   }
 
+  const overviewTitle = wantsOverview ? extractOverviewTitle(message) : null;
+
   return {
     intent,
     tag,
     seasonIntent,
     rankingIntent,
-    wantsOverview,
+
     wantsAnother,
-    overviewTitle: wantsOverview ? extractOverviewTitle(message) : null,
+    wantsOverview,
+    wantsCharacterList,
+    wantsExplicitCharacterOverview,
+    wantsExplicitAnimeOverview,
+
+    overviewTitle,
+    lookupTitle: overviewTitle,
+    isAmbiguousOverview: wantsOverview && !wantsExplicitAnimeOverview,
+
+    animeOverviewTitle: wantsExplicitAnimeOverview
+      ? extractExplicitAnimeOverviewTitle(message)
+      : null,
+
+    characterAnimeTitle: wantsCharacterList
+      ? extractCharacterAnimeTitle(message)
+      : null,
+
+    characterName: wantsExplicitCharacterOverview
+      ? extractCharacterName(message)
+      : null,
+
     animeTitle:
-      !tag && !seasonIntent && !rankingIntent && !wantsOverview
+      !tag &&
+      !seasonIntent &&
+      !rankingIntent &&
+      !wantsOverview &&
+      !wantsCharacterList &&
+      !wantsExplicitCharacterOverview &&
+      !wantsExplicitAnimeOverview
         ? extractAnimeTitle(message)
         : ""
   };
@@ -288,6 +459,29 @@ function cleanOverviewTitle(title) {
     .replace(/\banime\b/gi, "")
     .replace(/\boverview\b/gi, "")
     .replace(/\bdetails?\b/gi, "")
+    .replace(/\bplease\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanCharacterAnimeTitle(title) {
+  return title
+    .replace(/\banime\b/gi, "")
+    .replace(/\bcharacters?\b/gi, "")
+    .replace(/\bcast\b/gi, "")
+    .replace(/\bmain\b/gi, "")
+    .replace(/\bof\b/gi, "")
+    .replace(/\bfrom\b/gi, "")
+    .replace(/\bin\b/gi, "")
+    .replace(/\bplease\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanCharacterName(name) {
+  return name
+    .replace(/\bcharacter\b/gi, "")
+    .replace(/\bthe\b/gi, "")
     .replace(/\bplease\b/gi, "")
     .replace(/\s+/g, " ")
     .trim();

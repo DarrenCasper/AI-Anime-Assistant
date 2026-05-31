@@ -7,10 +7,13 @@ import {
   getUpcomingSeasonAnime,
   getSpecificSeasonAnime,
   getAnimeRecommendations,
+  getAnimeCharacters,
+  searchCharacters,
+  getCharacterById,
   filterAnimeByTag,
   sortAnimeList
 } from "../Services/JikanService.js";
-import { generateAnimeResponse } from "../Services/LLMService.js";
+import { generateAIAnimeResponse } from "../Services/AIProviderService.js";
 import { buildChatUiAction } from "../Services/uiDecisionService.js";
 import { parseAnimeRequest } from "../Services/queryIntentService.js";
 
@@ -83,14 +86,185 @@ function getSeasonLabel(seasonIntent) {
   return null;
 }
 
-function buildFallbackResponse(animeResults) {
-  if (!animeResults || animeResults.length === 0) {
-    return "I could not find anime data for that request right now.";
+function normalizeText(value = "") {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getTokens(value = "") {
+  return normalizeText(value)
+    .split(" ")
+    .filter(Boolean);
+}
+
+function isExactAnimeMatch(anime, query) {
+  const target = normalizeText(query);
+
+  if (!target || !anime) return false;
+
+  const possibleTitles = [
+    anime.title,
+    anime.titleEnglish,
+    anime.titleJapanese,
+    ...(anime.titleSynonyms || [])
+  ]
+    .filter(Boolean)
+    .map(normalizeText);
+
+  return possibleTitles.some((title) => title === target);
+}
+
+function findBestCharacterMatch(characters, query) {
+  if (!characters || characters.length === 0) return null;
+
+  const target = normalizeText(query);
+  const tokens = getTokens(query);
+
+  const exact = characters.find(
+    (character) => normalizeText(character.name) === target
+  );
+
+  if (exact) return exact;
+
+  if (tokens.length >= 2) {
+    return characters.find((character) =>
+      tokens.every((token) => normalizeText(character.name).includes(token))
+    );
   }
 
-  return `I found these anime that may match your request: ${animeResults
+  return null;
+}
+
+function findLastSeedAnimeContext(messages) {
+  return messages.find(
+    (msg) =>
+      msg.role === "assistant" &&
+      msg.meta?.seedAnime?.id &&
+      msg.meta?.seedAnime?.title
+  )?.meta?.seedAnime;
+}
+
+async function resolveCharacterFromAnimeContext(characterName, recentMessages) {
+  const lastSeedAnime = findLastSeedAnimeContext(recentMessages);
+
+  if (!lastSeedAnime?.id) {
+    return {
+      character: null,
+      seedAnime: null
+    };
+  }
+
+  const animeCharacters = await getAnimeCharacters(lastSeedAnime.id, 20);
+  const matchedCharacter = findBestCharacterMatch(animeCharacters, characterName);
+
+  if (!matchedCharacter) {
+    return {
+      character: null,
+      seedAnime: lastSeedAnime
+    };
+  }
+
+  const detailedCharacter = await getCharacterById(matchedCharacter.id);
+
+  return {
+    character: detailedCharacter || matchedCharacter,
+    seedAnime: lastSeedAnime
+  };
+}
+
+async function resolveCharacterGlobally(characterName) {
+  const characterResults = await searchCharacters(characterName, 8);
+
+  if (characterResults.length === 0) {
+    return {
+      type: "none",
+      results: []
+    };
+  }
+
+  const tokens = getTokens(characterName);
+  const bestMatch = findBestCharacterMatch(characterResults, characterName);
+
+  if (bestMatch && tokens.length >= 2) {
+    const detailedCharacter = await getCharacterById(bestMatch.id);
+
+    return {
+      type: "single",
+      results: detailedCharacter ? [detailedCharacter] : [bestMatch]
+    };
+  }
+
+  if (characterResults.length === 1) {
+    const detailedCharacter = await getCharacterById(characterResults[0].id);
+
+    return {
+      type: "single",
+      results: detailedCharacter ? [detailedCharacter] : [characterResults[0]]
+    };
+  }
+
+  return {
+    type: "multiple",
+    results: characterResults
+  };
+}
+
+function buildFallbackResponse(results, mode = "anime", contextInfo = {}) {
+  if (!results || results.length === 0) {
+    return "I could not find data for that request right now.";
+  }
+
+  if (mode === "characters" && contextInfo.characterDisambiguation) {
+    const names = results
+      .map((character) => character.name)
+      .filter(Boolean)
+      .join(", ");
+
+    return `I found several characters that could match your request: ${names}. Which one do you mean?`;
+  }
+
+  if (mode === "characters" || mode === "character_overview") {
+    const names = results
+      .map((character) => character.name)
+      .filter(Boolean)
+      .join(", ");
+
+    if (!names) {
+      return "I found some character results, but I could not generate a detailed response right now.";
+    }
+
+    return `I found these characters: ${names}.`;
+  }
+
+  const titles = results
     .map((anime) => anime.title)
-    .join(", ")}.`;
+    .filter(Boolean)
+    .join(", ");
+
+  if (!titles) {
+    return "I found some anime results, but I could not generate a detailed response right now.";
+  }
+
+  return `I found these anime that may match your request: ${titles}.`;
+}
+
+function isAiLimitError(error) {
+  const message = error.message?.toLowerCase() || "";
+
+  return (
+    message.includes("429") ||
+    message.includes("quota") ||
+    message.includes("rate limit") ||
+    message.includes("resource_exhausted") ||
+    message.includes("insufficient_quota")
+  );
+}
+
+function isCharacterMode(mode) {
+  return mode === "characters" || mode === "character_overview";
 }
 
 router.post("/", async (req, res) => {
@@ -116,51 +290,171 @@ router.post("/", async (req, res) => {
 
     const parsed = parseAnimeRequest(cleanMessage);
 
-    let animeResults = [];
+    let results = [];
     let mode = parsed.intent;
 
     let seedTitle = null;
     let seedAnime = null;
     let seedTag = parsed.tag || null;
+    let seedCharacter = null;
 
     let seasonIntent = parsed.seasonIntent || null;
     let seasonLabel = getSeasonLabel(seasonIntent);
 
     let rankingIntent = parsed.rankingIntent || null;
     let overviewTitle = parsed.overviewTitle || null;
+    let animeOverviewTitle = parsed.animeOverviewTitle || null;
+
+    let characterAnimeTitle = parsed.characterAnimeTitle || null;
+    let characterName = parsed.characterName || null;
+    let characterDisambiguation = false;
 
     let excludeIds = [];
     let tagFilterMatched = null;
 
-    // 1. Overview request.
-    // Example: "Tell me about Death Note"
-    if (parsed.intent === "overview") {
-      mode = "overview";
+    if (parsed.intent === "characters") {
+      mode = "characters";
 
-      const overviewResults = await searchAnime(
-        overviewTitle || cleanMessage,
-        1
+      const animeTitle = characterAnimeTitle || cleanMessage;
+      const animeSearchResults = await searchAnime(animeTitle, 1);
+
+      if (animeSearchResults.length > 0) {
+        seedAnime = animeSearchResults[0];
+        seedTitle = seedAnime.title;
+
+        results = await getAnimeCharacters(seedAnime.id, 12);
+      } else {
+        results = [];
+      }
+    } else if (parsed.intent === "character_overview") {
+      mode = "character_overview";
+
+      characterName = parsed.characterName || cleanMessage;
+
+      const contextualResult = await resolveCharacterFromAnimeContext(
+        characterName,
+        recentMessages
       );
 
-      animeResults = overviewResults.length > 0 ? [overviewResults[0]] : [];
-    }
+      if (contextualResult.character) {
+        seedAnime = contextualResult.seedAnime;
+        seedTitle = contextualResult.seedAnime?.title || null;
+        seedCharacter = {
+          id: contextualResult.character.id,
+          name: contextualResult.character.name
+        };
+        results = [contextualResult.character];
+      } else {
+        const globalResult = await resolveCharacterGlobally(characterName);
 
-    // 2. Season / year request with optional tag and ranking.
-    // Examples:
-    // "current season romance anime"
-    // "upcoming action anime"
-    // "spring 2025 fantasy anime"
-    // "popular romance anime from 2025"
-    else if (parsed.intent === "season" || parsed.intent === "year") {
+        if (globalResult.type === "single") {
+          seedCharacter = {
+            id: globalResult.results[0].id,
+            name: globalResult.results[0].name
+          };
+          results = globalResult.results;
+        } else if (globalResult.type === "multiple") {
+          mode = "characters";
+          characterDisambiguation = true;
+          results = globalResult.results;
+        } else {
+          results = [];
+        }
+      }
+    } else if (parsed.intent === "anime_overview") {
+      mode = "overview";
+
+      const animeTitle =
+        animeOverviewTitle || overviewTitle || cleanMessage;
+
+      const overviewResults = await searchAnime(animeTitle, 1);
+
+      results = overviewResults.length > 0 ? [overviewResults[0]] : [];
+    } else if (parsed.intent === "overview") {
+      const lookupTitle = parsed.lookupTitle || overviewTitle || cleanMessage;
+      const lookupTokens = getTokens(lookupTitle);
+
+      const contextualResult = await resolveCharacterFromAnimeContext(
+        lookupTitle,
+        recentMessages
+      );
+
+      if (contextualResult.character) {
+        mode = "character_overview";
+        characterName = lookupTitle;
+        seedAnime = contextualResult.seedAnime;
+        seedTitle = contextualResult.seedAnime?.title || null;
+        seedCharacter = {
+          id: contextualResult.character.id,
+          name: contextualResult.character.name
+        };
+        results = [contextualResult.character];
+      } else if (lookupTokens.length === 1) {
+        const globalCharacterResult = await resolveCharacterGlobally(lookupTitle);
+
+        if (globalCharacterResult.type === "single") {
+          mode = "character_overview";
+          characterName = lookupTitle;
+          seedCharacter = {
+            id: globalCharacterResult.results[0].id,
+            name: globalCharacterResult.results[0].name
+          };
+          results = globalCharacterResult.results;
+        } else if (globalCharacterResult.type === "multiple") {
+          mode = "characters";
+          characterName = lookupTitle;
+          characterDisambiguation = true;
+          results = globalCharacterResult.results;
+        } else {
+          const animeOverviewResults = await searchAnime(lookupTitle, 1);
+          mode = "overview";
+          results =
+            animeOverviewResults.length > 0 ? [animeOverviewResults[0]] : [];
+        }
+      } else {
+        const animeOverviewResults = await searchAnime(lookupTitle, 1);
+        const exactAnime =
+          animeOverviewResults.length > 0 &&
+          isExactAnimeMatch(animeOverviewResults[0], lookupTitle);
+
+        if (exactAnime) {
+          mode = "overview";
+          results = [animeOverviewResults[0]];
+        } else {
+          const globalCharacterResult = await resolveCharacterGlobally(
+            lookupTitle
+          );
+
+          if (globalCharacterResult.type === "single") {
+            mode = "character_overview";
+            characterName = lookupTitle;
+            seedCharacter = {
+              id: globalCharacterResult.results[0].id,
+              name: globalCharacterResult.results[0].name
+            };
+            results = globalCharacterResult.results;
+          } else if (globalCharacterResult.type === "multiple") {
+            mode = "characters";
+            characterName = lookupTitle;
+            characterDisambiguation = true;
+            results = globalCharacterResult.results;
+          } else {
+            mode = "overview";
+            results =
+              animeOverviewResults.length > 0 ? [animeOverviewResults[0]] : [];
+          }
+        }
+      }
+    } else if (parsed.intent === "season" || parsed.intent === "year") {
       if (seasonIntent.type === "current") {
         mode = "season";
-        animeResults = await getCurrentSeasonAnime(25);
+        results = await getCurrentSeasonAnime(25);
       } else if (seasonIntent.type === "upcoming") {
         mode = "season";
-        animeResults = await getUpcomingSeasonAnime(25);
+        results = await getUpcomingSeasonAnime(25);
       } else if (seasonIntent.type === "specific") {
         mode = "season";
-        animeResults = await getSpecificSeasonAnime(
+        results = await getSpecificSeasonAnime(
           seasonIntent.year,
           seasonIntent.season,
           25
@@ -168,7 +462,7 @@ router.post("/", async (req, res) => {
       } else if (seasonIntent.type === "year") {
         mode = "year";
 
-        animeResults = await searchAnimeAdvanced({
+        results = await searchAnimeAdvanced({
           tagId: seedTag?.id,
           year: seasonIntent.year,
           ranking: rankingIntent,
@@ -177,42 +471,25 @@ router.post("/", async (req, res) => {
       }
 
       if (seasonIntent.type !== "year" && seedTag) {
-        const filtered = filterAnimeByTag(animeResults, seedTag.name);
+        const filtered = filterAnimeByTag(results, seedTag.name);
 
         tagFilterMatched = filtered.length > 0;
 
-        animeResults =
-          filtered.length > 0
-            ? filtered
-            : animeResults;
+        results = filtered.length > 0 ? filtered : results;
       }
 
-      animeResults = sortAnimeList(animeResults, rankingIntent).slice(0, 5);
-    }
-
-    // 3. List request with optional tag and ranking.
-    // Examples:
-    // "popular anime"
-    // "popular romance anime"
-    // "top rated action anime"
-    // "isekai anime"
-    else if (parsed.intent === "list") {
+      results = sortAnimeList(results, rankingIntent).slice(0, 5);
+    } else if (parsed.intent === "list") {
       mode = rankingIntent || "tag";
 
-      animeResults = await searchAnimeAdvanced({
+      results = await searchAnimeAdvanced({
         tagId: seedTag?.id,
         ranking: rankingIntent,
         limit: 25
       });
 
-      animeResults = animeResults.slice(0, 5);
-    }
-
-    // 4. Anime-like recommendation or vague follow-up.
-    // Examples:
-    // "Recommend anime like Naruto"
-    // "How about another recommendation?"
-    else if (parsed.intent === "recommendation") {
+      results = results.slice(0, 5);
+    } else if (parsed.intent === "recommendation") {
       mode = "recommendation";
 
       if (parsed.animeTitle && !parsed.wantsAnother) {
@@ -245,13 +522,10 @@ router.post("/", async (req, res) => {
             limit: 25
           });
 
-          animeResults = filterExcludedAnime(tagResults, excludeIds).slice(
-            0,
-            5
-          );
+          results = filterExcludedAnime(tagResults, excludeIds).slice(0, 5);
 
-          if (animeResults.length === 0) {
-            animeResults = tagResults.slice(0, 5);
+          if (results.length === 0) {
+            results = tagResults.slice(0, 5);
           }
         } else if (lastRecommendationMessage?.meta?.seedAnime) {
           seedAnime = lastRecommendationMessage.meta.seedAnime;
@@ -268,20 +542,16 @@ router.post("/", async (req, res) => {
           excludeIds
         );
 
-        animeResults =
-          recommendations.length > 0 ? recommendations : [seedAnime];
+        results = recommendations.length > 0 ? recommendations : [seedAnime];
       }
 
-      if (!seedAnime && !seedTag && animeResults.length === 0) {
+      if (!seedAnime && !seedTag && results.length === 0) {
         mode = "search";
-        animeResults = await searchAnime(cleanMessage, 5);
+        results = await searchAnime(cleanMessage, 5);
       }
-    }
-
-    // 5. Normal search.
-    else {
+    } else {
       mode = "search";
-      animeResults = await searchAnime(cleanMessage, 5);
+      results = await searchAnime(cleanMessage, 5);
     }
 
     const chatHistory = recentMessages
@@ -289,11 +559,17 @@ router.post("/", async (req, res) => {
       .map((msg) => `${msg.role}: ${msg.content}`)
       .join("\n");
 
+    const provider = process.env.AI_PROVIDER || "gemini";
+
     const contextInfo = {
-      source: "gemini+jikan",
+      source: `${provider}+jikan`,
       mode,
       rankingIntent,
       overviewTitle,
+      animeOverviewTitle,
+      characterAnimeTitle,
+      characterName,
+      characterDisambiguation,
       seedTitle,
       seedAnime: seedAnime
         ? {
@@ -301,48 +577,54 @@ router.post("/", async (req, res) => {
             title: seedAnime.title
           }
         : null,
+      seedCharacter,
       seedTag,
       seasonIntent,
       seasonLabel,
       tagFilterMatched,
       parsed,
-      resultCount: animeResults.length
+      resultCount: results.length
     };
 
     let assistantText;
 
     try {
-      assistantText = await generateAnimeResponse(
+      assistantText = await generateAIAnimeResponse(
         cleanMessage,
-        animeResults,
+        results,
         chatHistory,
         contextInfo
       );
     } catch (error) {
-      const isGeminiLimit =
-        error.message.includes("429") ||
-        error.message.includes("RESOURCE_EXHAUSTED") ||
-        error.message.toLowerCase().includes("quota");
+      console.error("AI provider error:", error.message);
 
-      if (!isGeminiLimit) {
+      if (!isAiLimitError(error)) {
         throw error;
       }
 
-      assistantText = buildFallbackResponse(animeResults);
+      assistantText = buildFallbackResponse(results, mode, contextInfo);
     }
 
-    const ui = buildChatUiAction(cleanMessage, animeResults, contextInfo);
+    if (!assistantText || !assistantText.trim()) {
+      console.warn("AI returned empty response. Using fallback.");
+      assistantText = buildFallbackResponse(results, mode, contextInfo);
+    }
+
+    const ui = buildChatUiAction(cleanMessage, results, contextInfo);
+
+    const characterMode = isCharacterMode(mode);
 
     const assistantMeta = {
       ...contextInfo,
-      shownAnimeIds: animeResults.map((anime) => anime.id),
+      shownAnimeIds: characterMode ? [] : results.map((item) => item.id),
+      shownCharacterIds: characterMode ? results.map((item) => item.id) : [],
       excludedAnimeIds: excludeIds
     };
 
     const assistantMessage = await ChatMessage.create({
       role: "assistant",
       content: assistantText,
-      source: "gemini+jikan",
+      source: contextInfo.source,
       ui,
       meta: assistantMeta
     });
@@ -352,18 +634,33 @@ router.post("/", async (req, res) => {
       ui,
       meta: {
         ...assistantMeta,
-        shownAnime: animeResults.map((anime) => ({
-          id: anime.id,
-          title: anime.title,
-          type: anime.type,
-          score: anime.score,
-          year: anime.year,
-          season: anime.season,
-          popularity: anime.popularity,
-          rank: anime.rank,
-          genres: anime.genres,
-          themes: anime.themes
-        }))
+        shownAnime: characterMode
+          ? []
+          : results.map((anime) => ({
+              id: anime.id,
+              title: anime.title,
+              type: anime.type,
+              score: anime.score,
+              year: anime.year,
+              season: anime.season,
+              popularity: anime.popularity,
+              rank: anime.rank,
+              genres: anime.genres,
+              themes: anime.themes
+            })),
+        shownCharacters: characterMode
+          ? results.map((character) => ({
+              id: character.id,
+              name: character.name,
+              nameKanji: character.nameKanji,
+              nicknames: character.nicknames,
+              favorites: character.favorites,
+              role: character.role,
+              anime: character.anime?.slice(0, 5),
+              manga: character.manga?.slice(0, 5),
+              voiceActors: character.voiceActors?.slice(0, 5)
+            }))
+          : []
       }
     });
   } catch (error) {
@@ -371,6 +668,63 @@ router.post("/", async (req, res) => {
 
     res.status(500).json({
       error: error.message || "Server error"
+    });
+  }
+});
+
+router.post("/character-overview", async (req, res) => {
+  try {
+    const { characterId } = req.body;
+
+    if (!characterId) {
+      return res.status(400).json({
+        error: "characterId is required"
+      });
+    }
+
+    const character = await getCharacterById(characterId);
+
+    if (!character) {
+      return res.status(404).json({
+        error: "Character not found"
+      });
+    }
+
+    const reply = `Here is an overview of ${character.name}.`;
+
+    const ui = {
+      type: "character_overview",
+      data: {
+        character
+      }
+    };
+
+    const assistantMessage = await ChatMessage.create({
+      role: "assistant",
+      content: reply,
+      source: "jikan",
+      ui,
+      meta: {
+        source: "jikan",
+        mode: "character_overview",
+        seedCharacter: {
+          id: character.id,
+          name: character.name
+        },
+        shownCharacterIds: [character.id]
+      }
+    });
+
+    res.json({
+      reply: assistantMessage.content,
+      ui,
+      meta: assistantMessage.meta
+    });
+  } catch (error) {
+    console.error("Character overview route error:", error.message);
+
+    res.status(500).json({
+      error: error.message || "Failed to fetch character overview"
     });
   }
 });

@@ -346,3 +346,120 @@ export async function getAnimeRecommendations(
     throw new Error("Failed to fetch anime recommendations from Jikan API");
   }
 }
+
+export async function getAnimeCharacters(animeId, limit = 12) {
+  try {
+    const data = await fetchJson(
+      `https://api.jikan.moe/v4/anime/${animeId}/characters`,
+      "Jikan anime characters"
+    );
+
+    return data.data.slice(0, limit).map((item) => ({
+      id: item.character.mal_id,
+      name: item.character.name,
+      role: item.role,
+      image:
+        item.character.images?.webp?.image_url ||
+        item.character.images?.jpg?.image_url,
+      url: item.character.url,
+      favorites: item.favorites,
+      voiceActors:
+        item.voice_actors?.slice(0, 3).map((va) => ({
+          id: va.person.mal_id,
+          name: va.person.name,
+          language: va.language,
+          image:
+            va.person.images?.jpg?.image_url ||
+            va.person.images?.webp?.image_url,
+          url: va.person.url
+        })) || []
+    }));
+  } catch (error) {
+    console.error("Jikan anime characters error:", error.message);
+    throw new Error("Failed to fetch anime characters from Jikan API");
+  }
+}
+
+function normalizeCharacter(character) {
+  const jpg = character.images?.jpg;
+  const webp = character.images?.webp;
+
+  return {
+    id: character.mal_id,
+    name: character.name,
+    nameKanji: character.name_kanji,
+    nicknames: character.nicknames || [],
+    about: character.about,
+    favorites: character.favorites,
+    image:
+      webp?.image_url ||
+      jpg?.image_url,
+    url: character.url
+  };
+}
+
+export async function searchCharacters(query, limit = 8) {
+  try {
+    const url = new URL("https://api.jikan.moe/v4/characters");
+
+    url.searchParams.append("q", query);
+    url.searchParams.append("limit", String(limit));
+
+    const data = await fetchJson(url, "Jikan character search");
+
+    return data.data
+      .map(normalizeCharacter)
+      .filter((character) => character.name && character.image);
+  } catch (error) {
+    console.error("Jikan character search error:", error.message);
+    throw new Error("Failed to search characters from Jikan API");
+  }
+}
+
+export async function getCharacterById(characterId) {
+  try {
+    const data = await fetchJson(
+      `https://api.jikan.moe/v4/characters/${characterId}/full`,
+      "Jikan character detail"
+    );
+
+    const character = data.data;
+
+    return {
+      ...normalizeCharacter(character),
+      anime:
+        character.anime?.map((item) => ({
+          id: item.anime.mal_id,
+          title: item.anime.title,
+          role: item.role,
+          image:
+            item.anime.images?.webp?.image_url ||
+            item.anime.images?.jpg?.image_url,
+          url: item.anime.url
+        })) || [],
+      manga:
+        character.manga?.map((item) => ({
+          id: item.manga.mal_id,
+          title: item.manga.title,
+          role: item.role,
+          image:
+            item.manga.images?.webp?.image_url ||
+            item.manga.images?.jpg?.image_url,
+          url: item.manga.url
+        })) || [],
+      voiceActors:
+        character.voices?.slice(0, 8).map((voice) => ({
+          id: voice.person.mal_id,
+          name: voice.person.name,
+          language: voice.language,
+          image:
+            voice.person.images?.jpg?.image_url ||
+            voice.person.images?.webp?.image_url,
+          url: voice.person.url
+        })) || []
+    };
+  } catch (error) {
+    console.error("Jikan character detail error:", error.message);
+    throw new Error("Failed to fetch character detail from Jikan API");
+  }
+}

@@ -1,22 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { sendChatMessage } from "@/api/chatApi";
+import { getCharacterOverview } from "@/api/characterApi";
 import ChatInput from "@/components/chat/ChatInput";
 import ChatMessage from "@/components/chat/ChatMessage";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState([
-    {
-      id: "welcome",
-      role: "assistant",
-      content: "Hi, I'm AniMate. Ask me for anime recommendations.",
-      ui: null,
-      animate: false,
-      loading: false
-    }
-  ]);
-
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef(null);
@@ -32,14 +23,16 @@ export default function ChatPage() {
     if (!input.trim() || loading) return;
 
     const userText = input.trim();
-    const loadingMessageId = `loading-${Date.now()}`;
+    const timestamp = Date.now();
+    const loadingMessageId = `loading-${timestamp}`;
 
     setMessages((prev) => [
       ...prev,
       {
-        id: `user-${Date.now()}`,
+        id: `user-${timestamp}`,
         role: "user",
         content: userText,
+        ui: null,
         animate: false,
         loading: false
       },
@@ -91,6 +84,61 @@ export default function ChatPage() {
     }
   }
 
+  async function handleCharacterSelect(character) {
+    if (!character?.id) return;
+
+    const loadingMessageId = `character-loading-${Date.now()}`;
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: loadingMessageId,
+        role: "assistant",
+        content: "",
+        ui: null,
+        animate: false,
+        loading: true
+      }
+    ]);
+
+    try {
+      const data = await getCharacterOverview(character.id);
+
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === loadingMessageId
+            ? {
+                ...msg,
+                content: data.reply,
+                ui: data.ui,
+                animate: false,
+                loading: false
+              }
+            : msg
+        )
+      );
+    } catch (error) {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === loadingMessageId
+            ? {
+                ...msg,
+                content: error.message || "Failed to load character overview.",
+                ui: null,
+                animate: true,
+                loading: false
+              }
+            : msg
+        )
+      );
+    }
+  }
+
+  function handleSuggestionClick(text) {
+    if (loading) return;
+    setInput(text);
+  }
+
   return (
     <div className="h-dvh overflow-hidden bg-[#050510] text-white">
       <div className="flex h-full">
@@ -100,15 +148,48 @@ export default function ChatPage() {
             <p className="mt-1 text-sm text-white/50">AI Anime Assistant</p>
           </div>
 
-          <Button className="mt-8 w-full rounded-2xl" variant="secondary">
+          <Button
+            className="mt-8 w-full rounded-2xl"
+            variant="secondary"
+            onClick={() => setMessages([])}
+          >
             New Chat
           </Button>
 
-          <div className="mt-8 space-y-2 text-sm text-white/50">
+          <div className="mt-8 space-y-3 text-sm text-white/50">
             <p className="font-medium text-white/70">Try asking:</p>
-            <p>Recommend anime like Naruto</p>
-            <p>Best romance anime</p>
-            <p>Anime like Sword Art Online</p>
+
+            <button
+              type="button"
+              onClick={() => handleSuggestionClick("Recommend anime like Naruto")}
+              className="block text-left hover:text-white"
+            >
+              Recommend anime like Naruto
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSuggestionClick("Give me popular romance anime")}
+              className="block text-left hover:text-white"
+            >
+              Give me popular romance anime
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSuggestionClick("Show me characters in Jujutsu Kaisen")}
+              className="block text-left hover:text-white"
+            >
+              Show me characters in Jujutsu Kaisen
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSuggestionClick("Tell me about Death Note")}
+              className="block text-left hover:text-white"
+            >
+              Tell me about Death Note
+            </button>
           </div>
         </aside>
 
@@ -122,8 +203,49 @@ export default function ChatPage() {
 
           <ScrollArea className="min-h-0 flex-1">
             <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-10">
+              {messages.length === 0 && (
+                <div className="flex min-h-[55vh] items-center justify-center">
+                  <div className="w-full max-w-2xl rounded-3xl border border-white/10 bg-white/6 p-6 text-center shadow-2xl shadow-black/20 backdrop-blur">
+                    <p className="text-sm font-medium text-violet-300">
+                      AniMate
+                    </p>
+
+                    <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">
+                      What anime do you want to explore?
+                    </h1>
+
+                    <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-white/50">
+                      Ask for recommendations, anime overviews, seasonal anime,
+                      popular titles, or characters from a specific anime.
+                    </p>
+
+                    <div className="mt-5 flex flex-wrap justify-center gap-2">
+                      {[
+                        "Recommend anime like Naruto",
+                        "Current season romance anime",
+                        "Tell me about Jujutsu Kaisen",
+                        "Show me characters in Horimiya"
+                      ].map((text) => (
+                        <button
+                          key={text}
+                          type="button"
+                          onClick={() => handleSuggestionClick(text)}
+                          className="rounded-full border border-white/10 bg-black/20 px-4 py-2 text-xs text-white/70 transition hover:border-violet-400/40 hover:bg-violet-500/10 hover:text-white"
+                        >
+                          {text}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {messages.map((message) => (
-                <ChatMessage key={message.id} message={message} />
+                <ChatMessage
+                  key={message.id}
+                  message={message}
+                  onCharacterSelect={handleCharacterSelect}
+                />
               ))}
 
               <div ref={bottomRef} />

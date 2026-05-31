@@ -2,7 +2,7 @@ import ChatActionRenderer from "./ChatActionRenderer";
 import TypewriterText from "./TypewriterText";
 import { Skeleton } from "@/components/ui/skeleton";
 
-export default function ChatMessage({ message }) {
+export default function ChatMessage({ message, onCharacterSelect }) {
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
 
@@ -41,7 +41,7 @@ export default function ChatMessage({ message }) {
         </div>
 
         {isAssistant && !message.loading && (
-          <ChatActionRenderer ui={message.ui} />
+          <ChatActionRenderer ui={message.ui} onCharacterSelect={onCharacterSelect} />
         )}
       </div>
     </div>
