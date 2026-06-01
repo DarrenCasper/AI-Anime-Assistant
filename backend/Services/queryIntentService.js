@@ -45,6 +45,25 @@ export function extractGenre(message) {
   return extractAnimeTag(message);
 }
 
+export function extractMediaType(message) {
+  const text = message.toLowerCase();
+
+  if (
+    text.includes("manga") ||
+    text.includes("manhwa") ||
+    text.includes("manhua") ||
+    text.includes("webtoon")
+  ) {
+    return "manga";
+  }
+
+  if (text.includes("anime")) {
+    return "anime";
+  }
+
+  return "anime";
+}
+
 export function extractSeasonIntent(message) {
   const text = message.toLowerCase();
 
@@ -89,6 +108,40 @@ export function extractSeasonIntent(message) {
   return null;
 }
 
+export function extractMangaStatusIntent(message) {
+  const text = message.toLowerCase();
+
+  if (
+    text.includes("currently publishing") ||
+    text.includes("publishing manga") ||
+    text.includes("ongoing manga") ||
+    text.includes("ongoing manhwa") ||
+    text.includes("ongoing webtoon")
+  ) {
+    return "publishing";
+  }
+
+  if (
+    text.includes("completed manga") ||
+    text.includes("finished manga") ||
+    text.includes("complete manga") ||
+    text.includes("completed manhwa") ||
+    text.includes("finished manhwa")
+  ) {
+    return "complete";
+  }
+
+  if (text.includes("hiatus manga") || text.includes("on hiatus")) {
+    return "hiatus";
+  }
+
+  if (text.includes("discontinued manga")) {
+    return "discontinued";
+  }
+
+  return null;
+}
+
 export function extractRankingIntent(message) {
   const text = message.toLowerCase();
 
@@ -104,6 +157,7 @@ export function extractRankingIntent(message) {
     text.includes("top rated") ||
     text.includes("highest rated") ||
     text.includes("best anime") ||
+    text.includes("best manga") ||
     text.includes("most rated") ||
     text.includes("highest score")
   ) {
@@ -120,6 +174,7 @@ export function isAnotherRecommendationRequest(message) {
     text.includes("another recommendation") ||
     text.includes("another one") ||
     text.includes("another anime") ||
+    text.includes("another manga") ||
     text.includes("more recommendation") ||
     text.includes("more recommendations") ||
     text.includes("give me another") ||
@@ -247,6 +302,62 @@ export function extractExplicitAnimeOverviewTitle(message) {
     .trim();
 }
 
+export function isExplicitMangaOverviewRequest(message) {
+  const text = message.toLowerCase().trim();
+
+  const patterns = [
+    /^tell me about manga\s+.+/i,
+    /^tell me about the manga\s+.+/i,
+    /^tell me about manhwa\s+.+/i,
+    /^tell me about the manhwa\s+.+/i,
+    /^tell me about manhua\s+.+/i,
+    /^tell me about webtoon\s+.+/i,
+
+    /^manga overview of\s+.+/i,
+    /^manhwa overview of\s+.+/i,
+    /^overview of manga\s+.+/i,
+    /^overview of manhwa\s+.+/i,
+
+    /^details? about manga\s+.+/i,
+    /^details? about manhwa\s+.+/i,
+    /^what is manga\s+.+/i,
+    /^what is manhwa\s+.+/i,
+
+    /^tell me about\s+.+\s+(manga|manhwa|manhua|webtoon)$/i,
+    /^what is\s+.+\s+(manga|manhwa|manhua|webtoon)$/i,
+    /^details? about\s+.+\s+(manga|manhwa|manhua|webtoon)$/i,
+    /^overview of\s+.+\s+(manga|manhwa|manhua|webtoon)$/i
+  ];
+
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+export function extractMangaOverviewTitle(message) {
+  const cleanMessage = message
+    .replace(/[?!.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleanMessage
+    .replace(/^tell me about the manga\s+/i, "")
+    .replace(/^tell me about manga\s+/i, "")
+    .replace(/^tell me about the manhwa\s+/i, "")
+    .replace(/^tell me about manhwa\s+/i, "")
+    .replace(/^tell me about manhua\s+/i, "")
+    .replace(/^tell me about webtoon\s+/i, "")
+    .replace(/^manga overview of\s+/i, "")
+    .replace(/^manhwa overview of\s+/i, "")
+    .replace(/^overview of manga\s+/i, "")
+    .replace(/^overview of manhwa\s+/i, "")
+    .replace(/^details? about manga\s+/i, "")
+    .replace(/^details? about manhwa\s+/i, "")
+    .replace(/^what is manga\s+/i, "")
+    .replace(/^what is manhwa\s+/i, "")
+    .replace(/\b(manga|manhwa|manhua|webtoon)\b$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function isOverviewRequest(message) {
   const text = message.toLowerCase().trim();
 
@@ -255,7 +366,8 @@ export function isOverviewRequest(message) {
     "what are good",
     "what is the best",
     "what are the best",
-    "what should i watch"
+    "what should i watch",
+    "what should i read"
   ];
 
   if (badOverviewPhrases.some((phrase) => text.includes(phrase))) {
@@ -310,11 +422,15 @@ export function isRecommendationRequest(message) {
     text.includes("recommendation") ||
     text.includes("similar to") ||
     text.includes("anime like") ||
+    text.includes("manga like") ||
+    text.includes("manhwa like") ||
+    text.includes("webtoon like") ||
     text.includes("more like") ||
     isAnotherRecommendationRequest(message) ||
     Boolean(extractAnimeTag(message)) ||
     Boolean(extractSeasonIntent(message)) ||
-    Boolean(extractRankingIntent(message))
+    Boolean(extractRankingIntent(message)) ||
+    Boolean(extractMangaStatusIntent(message))
   );
 }
 
@@ -367,16 +483,78 @@ export function extractAnimeTitle(message) {
   return cleanTitle(cleanMessage);
 }
 
-export function parseAnimeRequest(message) {
+export function extractMangaTitle(message) {
   const tag = extractAnimeTag(message);
   const seasonIntent = extractSeasonIntent(message);
   const rankingIntent = extractRankingIntent(message);
+  const mangaStatusIntent = extractMangaStatusIntent(message);
+
+  if (tag || seasonIntent || rankingIntent || mangaStatusIntent) {
+    return "";
+  }
+
+  const cleanMessage = message
+    .replace(/[?!.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const lower = cleanMessage.toLowerCase();
+
+  const noExplicitTitlePhrases = [
+    "how about another recommendation",
+    "another recommendation",
+    "another one",
+    "another manga",
+    "another manhwa",
+    "give me another",
+    "more recommendation",
+    "more recommendations"
+  ];
+
+  if (noExplicitTitlePhrases.some((phrase) => lower.includes(phrase))) {
+    return "";
+  }
+
+  const patterns = [
+    /recommend(?: me)?(?: some)?(?: a)?(?: manga|manhwa|manhua|webtoon)?(?: similar to| like)\s+(.+)/i,
+    /(?:manga|manhwa|manhua|webtoon) like\s+(.+)/i,
+    /similar (?:manga|manhwa|manhua|webtoon) to\s+(.+)/i,
+    /more like\s+(.+)/i,
+    /like\s+(.+)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleanMessage.match(pattern);
+
+    if (match && match[1]) {
+      return cleanMangaTitle(match[1]);
+    }
+  }
+
+  return cleanMangaTitle(cleanMessage);
+}
+
+export function parseAnimeRequest(message) {
+  const mediaType = extractMediaType(message);
+  const tag = extractAnimeTag(message);
+  const seasonIntent = extractSeasonIntent(message);
+  const mangaStatusIntent = extractMangaStatusIntent(message);
+  const rankingIntent = extractRankingIntent(message);
 
   const wantsAnother = isAnotherRecommendationRequest(message);
-  const wantsCharacterList = isCharacterListRequest(message);
+
+  const wantsCharacterList =
+    mediaType !== "manga" && isCharacterListRequest(message);
+
   const wantsExplicitCharacterOverview =
-    isExplicitCharacterOverviewRequest(message);
-  const wantsExplicitAnimeOverview = isExplicitAnimeOverviewRequest(message);
+    mediaType !== "manga" && isExplicitCharacterOverviewRequest(message);
+
+  const wantsExplicitAnimeOverview =
+    mediaType !== "manga" && isExplicitAnimeOverviewRequest(message);
+
+  const wantsExplicitMangaOverview =
+    mediaType === "manga" && isExplicitMangaOverviewRequest(message);
+
   const wantsOverview = isOverviewRequest(message);
 
   let intent = "search";
@@ -385,10 +563,18 @@ export function parseAnimeRequest(message) {
     intent = "characters";
   } else if (wantsExplicitCharacterOverview) {
     intent = "character_overview";
+  } else if (wantsExplicitMangaOverview) {
+    intent = "manga_overview";
   } else if (wantsExplicitAnimeOverview) {
     intent = "anime_overview";
-  } else if (wantsOverview) {
+  } else if (mediaType === "manga" && wantsOverview) {
+    intent = "manga_overview";
+  } else if (mediaType !== "manga" && wantsOverview) {
     intent = "overview";
+  } else if (mediaType === "manga" && seasonIntent?.type === "year") {
+    intent = "year";
+  } else if (mediaType === "manga" && (rankingIntent || tag || mangaStatusIntent)) {
+    intent = "list";
   } else if (seasonIntent) {
     intent = seasonIntent.type === "year" ? "year" : "season";
   } else if (rankingIntent || tag) {
@@ -401,8 +587,10 @@ export function parseAnimeRequest(message) {
 
   return {
     intent,
+    mediaType,
     tag,
     seasonIntent,
+    mangaStatusIntent,
     rankingIntent,
 
     wantsAnother,
@@ -410,14 +598,21 @@ export function parseAnimeRequest(message) {
     wantsCharacterList,
     wantsExplicitCharacterOverview,
     wantsExplicitAnimeOverview,
+    wantsExplicitMangaOverview,
 
     overviewTitle,
     lookupTitle: overviewTitle,
-    isAmbiguousOverview: wantsOverview && !wantsExplicitAnimeOverview,
+    isAmbiguousOverview:
+      mediaType !== "manga" && wantsOverview && !wantsExplicitAnimeOverview,
 
     animeOverviewTitle: wantsExplicitAnimeOverview
       ? extractExplicitAnimeOverviewTitle(message)
       : null,
+
+    mangaOverviewTitle:
+      wantsExplicitMangaOverview || mediaType === "manga"
+        ? extractMangaOverviewTitle(message)
+        : null,
 
     characterAnimeTitle: wantsCharacterList
       ? extractCharacterAnimeTitle(message)
@@ -428,6 +623,7 @@ export function parseAnimeRequest(message) {
       : null,
 
     animeTitle:
+      mediaType !== "manga" &&
       !tag &&
       !seasonIntent &&
       !rankingIntent &&
@@ -436,6 +632,17 @@ export function parseAnimeRequest(message) {
       !wantsExplicitCharacterOverview &&
       !wantsExplicitAnimeOverview
         ? extractAnimeTitle(message)
+        : "",
+
+    mangaTitle:
+      mediaType === "manga" &&
+      !tag &&
+      !seasonIntent &&
+      !rankingIntent &&
+      !mangaStatusIntent &&
+      !wantsExplicitMangaOverview &&
+      !wantsOverview
+        ? extractMangaTitle(message)
         : ""
   };
 }
@@ -445,6 +652,23 @@ function cleanTitle(title) {
     .replace(/\bplease\b/gi, "")
     .replace(/\bfor me\b/gi, "")
     .replace(/\banime\b/gi, "")
+    .replace(/\brecommendation\b/gi, "")
+    .replace(/\brecommendations\b/gi, "")
+    .replace(/\brecommend\b/gi, "")
+    .replace(/\bgive me\b/gi, "")
+    .replace(/\banother\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanMangaTitle(title) {
+  return title
+    .replace(/\bplease\b/gi, "")
+    .replace(/\bfor me\b/gi, "")
+    .replace(/\bmanga\b/gi, "")
+    .replace(/\bmanhwa\b/gi, "")
+    .replace(/\bmanhua\b/gi, "")
+    .replace(/\bwebtoon\b/gi, "")
     .replace(/\brecommendation\b/gi, "")
     .replace(/\brecommendations\b/gi, "")
     .replace(/\brecommend\b/gi, "")

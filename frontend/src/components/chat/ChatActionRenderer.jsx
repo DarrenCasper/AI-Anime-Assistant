@@ -1,5 +1,7 @@
 import AnimeCardGrid from "../anime/AnimeCardGrid";
 import AnimeOverview from "../anime/AnimeOverview";
+import MangaCardGrid from "../Manga/MangaCardGrid";
+import MangaOverview from "../manga/MangaOverview";
 import CharacterCardGrid from "../character/CharacterCardGrid";
 import CharacterOverview from "../character/CharacterOverview";
 
@@ -12,6 +14,14 @@ export default function ChatActionRenderer({ ui, onCharacterSelect }) {
 
   if (ui.type === "anime_overview") {
     return <AnimeOverview anime={ui.data?.anime} />;
+  }
+
+  if (ui.type === "manga_cards") {
+    return <MangaCardGrid items={ui.data?.items || []} />;
+  }
+
+  if (ui.type === "manga_overview") {
+    return <MangaOverview manga={ui.data?.manga} />;
   }
 
   if (ui.type === "character_cards") {

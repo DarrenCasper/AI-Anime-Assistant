@@ -11,7 +11,13 @@ import {
   searchCharacters,
   getCharacterById,
   filterAnimeByTag,
-  sortAnimeList
+  sortAnimeList,
+  searchManga,
+  searchMangaAdvanced,
+  getMangaById,
+  getMangaRecommendations,
+  filterMangaByTag,
+  sortMangaList
 } from "../Services/JikanService.js";
 import { generateAIAnimeResponse } from "../Services/AIProviderService.js";
 import { buildChatUiAction } from "../Services/uiDecisionService.js";
@@ -39,11 +45,53 @@ function getShownAnimeIdsFromMessages(messages, seedAnimeId) {
   return ids;
 }
 
+function getShownMangaIdsFromMessages(messages, seedMangaId) {
+  const ids = [];
+
+  for (const msg of messages) {
+    const sameSeed =
+      msg.meta?.seedManga?.id &&
+      String(msg.meta.seedManga.id) === String(seedMangaId);
+
+    if (!sameSeed) continue;
+
+    const items = msg.ui?.data?.items || [];
+
+    for (const item of items) {
+      if (item.id) ids.push(item.id);
+    }
+  }
+
+  return ids;
+}
+
 function getShownAnimeIdsFromTagMessages(messages, tagId) {
   const ids = [];
 
   for (const msg of messages) {
     const sameTag =
+      msg.meta?.mediaType !== "manga" &&
+      msg.meta?.seedTag?.id &&
+      String(msg.meta.seedTag.id) === String(tagId);
+
+    if (!sameTag) continue;
+
+    const items = msg.ui?.data?.items || [];
+
+    for (const item of items) {
+      if (item.id) ids.push(item.id);
+    }
+  }
+
+  return ids;
+}
+
+function getShownMangaIdsFromTagMessages(messages, tagId) {
+  const ids = [];
+
+  for (const msg of messages) {
+    const sameTag =
+      msg.meta?.mediaType === "manga" &&
       msg.meta?.seedTag?.id &&
       String(msg.meta.seedTag.id) === String(tagId);
 
@@ -62,6 +110,11 @@ function getShownAnimeIdsFromTagMessages(messages, tagId) {
 function filterExcludedAnime(animeList, excludeIds = []) {
   const excluded = new Set(excludeIds.map(String));
   return animeList.filter((anime) => !excluded.has(String(anime.id)));
+}
+
+function filterExcludedManga(mangaList, excludeIds = []) {
+  const excluded = new Set(excludeIds.map(String));
+  return mangaList.filter((manga) => !excluded.has(String(manga.id)));
 }
 
 function getSeasonLabel(seasonIntent) {
@@ -100,16 +153,16 @@ function getTokens(value = "") {
     .filter(Boolean);
 }
 
-function isExactAnimeMatch(anime, query) {
+function isExactTitleMatch(item, query) {
   const target = normalizeText(query);
 
-  if (!target || !anime) return false;
+  if (!target || !item) return false;
 
   const possibleTitles = [
-    anime.title,
-    anime.titleEnglish,
-    anime.titleJapanese,
-    ...(anime.titleSynonyms || [])
+    item.title,
+    item.titleEnglish,
+    item.titleJapanese,
+    ...(item.titleSynonyms || [])
   ]
     .filter(Boolean)
     .map(normalizeText);
@@ -147,6 +200,15 @@ function findLastSeedAnimeContext(messages) {
   )?.meta?.seedAnime;
 }
 
+function findLastSeedMangaContext(messages) {
+  return messages.find(
+    (msg) =>
+      msg.role === "assistant" &&
+      msg.meta?.seedManga?.id &&
+      msg.meta?.seedManga?.title
+  )?.meta?.seedManga;
+}
+
 async function resolveCharacterFromAnimeContext(characterName, recentMessages) {
   const lastSeedAnime = findLastSeedAnimeContext(recentMessages);
 
@@ -176,7 +238,7 @@ async function resolveCharacterFromAnimeContext(characterName, recentMessages) {
 }
 
 async function resolveCharacterGlobally(characterName) {
-  const characterResults = await searchCharacters(characterName, 8);
+  const characterResults = await searchCharacters(characterName, 10);
 
   if (characterResults.length === 0) {
     return {
@@ -212,6 +274,26 @@ async function resolveCharacterGlobally(characterName) {
   };
 }
 
+async function resolveMangaOverview(title, recentMessages) {
+  const normalizedTitle = normalizeText(title);
+
+  if (["this", "this manga", "it"].includes(normalizedTitle)) {
+    const lastSeedManga = findLastSeedMangaContext(recentMessages);
+
+    if (lastSeedManga?.id) {
+      const detailedManga = await getMangaById(lastSeedManga.id);
+      return detailedManga ? [detailedManga] : [lastSeedManga];
+    }
+  }
+
+  const overviewResults = await searchManga(title, 1);
+
+  if (overviewResults.length === 0) return [];
+
+  const detailedManga = await getMangaById(overviewResults[0].id);
+  return detailedManga ? [detailedManga] : [overviewResults[0]];
+}
+
 function buildFallbackResponse(results, mode = "anime", contextInfo = {}) {
   if (!results || results.length === 0) {
     return "I could not find data for that request right now.";
@@ -239,16 +321,17 @@ function buildFallbackResponse(results, mode = "anime", contextInfo = {}) {
     return `I found these characters: ${names}.`;
   }
 
+  const mediaLabel = contextInfo.mediaType === "manga" ? "manga" : "anime";
   const titles = results
-    .map((anime) => anime.title)
+    .map((item) => item.title)
     .filter(Boolean)
     .join(", ");
 
   if (!titles) {
-    return "I found some anime results, but I could not generate a detailed response right now.";
+    return `I found some ${mediaLabel} results, but I could not generate a detailed response right now.`;
   }
 
-  return `I found these anime that may match your request: ${titles}.`;
+  return `I found these ${mediaLabel} that may match your request: ${titles}.`;
 }
 
 function isAiLimitError(error) {
@@ -265,6 +348,42 @@ function isAiLimitError(error) {
 
 function isCharacterMode(mode) {
   return mode === "characters" || mode === "character_overview";
+}
+
+function summarizeAnime(anime) {
+  return {
+    id: anime.id,
+    title: anime.title,
+    type: anime.type,
+    score: anime.score,
+    year: anime.year,
+    season: anime.season,
+    popularity: anime.popularity,
+    rank: anime.rank,
+    genres: anime.genres,
+    themes: anime.themes
+  };
+}
+
+function summarizeManga(manga) {
+  return {
+    id: manga.id,
+    title: manga.title,
+    titleEnglish: manga.titleEnglish,
+    type: manga.type,
+    status: manga.status,
+    publishing: manga.publishing,
+    chapters: manga.chapters,
+    volumes: manga.volumes,
+    score: manga.score,
+    popularity: manga.popularity,
+    rank: manga.rank,
+    genres: manga.genres,
+    themes: manga.themes,
+    demographics: manga.demographics,
+    authors: manga.authors,
+    serializations: manga.serializations
+  };
 }
 
 router.post("/", async (req, res) => {
@@ -289,12 +408,15 @@ router.post("/", async (req, res) => {
       .limit(30);
 
     const parsed = parseAnimeRequest(cleanMessage);
+    const mediaType = parsed.mediaType || "anime";
+    const isMangaRequest = mediaType === "manga";
 
     let results = [];
     let mode = parsed.intent;
 
     let seedTitle = null;
     let seedAnime = null;
+    let seedManga = null;
     let seedTag = parsed.tag || null;
     let seedCharacter = null;
 
@@ -302,8 +424,10 @@ router.post("/", async (req, res) => {
     let seasonLabel = getSeasonLabel(seasonIntent);
 
     let rankingIntent = parsed.rankingIntent || null;
+    let mangaStatusIntent = parsed.mangaStatusIntent || null;
     let overviewTitle = parsed.overviewTitle || null;
     let animeOverviewTitle = parsed.animeOverviewTitle || null;
+    let mangaOverviewTitle = parsed.mangaOverviewTitle || null;
 
     let characterAnimeTitle = parsed.characterAnimeTitle || null;
     let characterName = parsed.characterName || null;
@@ -312,7 +436,119 @@ router.post("/", async (req, res) => {
     let excludeIds = [];
     let tagFilterMatched = null;
 
-    if (parsed.intent === "characters") {
+    if (isMangaRequest) {
+      if (parsed.intent === "manga_overview" || parsed.intent === "overview") {
+        mode = "manga_overview";
+
+        const title =
+          mangaOverviewTitle || overviewTitle || parsed.lookupTitle || cleanMessage;
+
+        results = await resolveMangaOverview(title, recentMessages);
+
+        if (results.length > 0) {
+          seedManga = results[0];
+          seedTitle = seedManga.title;
+        }
+      } else if (parsed.intent === "year") {
+        mode = "year";
+
+        results = await searchMangaAdvanced({
+          tagId: seedTag?.id,
+          year: seasonIntent?.year,
+          ranking: rankingIntent,
+          status: mangaStatusIntent,
+          limit: 25
+        });
+
+        results = sortMangaList(results, rankingIntent).slice(0, 5);
+      } else if (parsed.intent === "season") {
+        mode = rankingIntent || mangaStatusIntent || "manga_list";
+
+        results = await searchMangaAdvanced({
+          tagId: seedTag?.id,
+          ranking: rankingIntent,
+          status: mangaStatusIntent,
+          limit: 25
+        });
+
+        results = sortMangaList(results, rankingIntent).slice(0, 5);
+      } else if (parsed.intent === "list") {
+        mode = rankingIntent || mangaStatusIntent || "tag";
+
+        results = await searchMangaAdvanced({
+          tagId: seedTag?.id,
+          ranking: rankingIntent,
+          status: mangaStatusIntent,
+          limit: 25
+        });
+
+        results = results.slice(0, 5);
+      } else if (parsed.intent === "recommendation") {
+        mode = "recommendation";
+
+        if (parsed.mangaTitle && !parsed.wantsAnother) {
+          seedTitle = parsed.mangaTitle;
+
+          const seedResults = await searchManga(seedTitle, 1);
+
+          if (seedResults.length > 0) {
+            seedManga = seedResults[0];
+          }
+        } else {
+          const lastRecommendationMessage = recentMessages.find(
+            (msg) =>
+              msg.role === "assistant" &&
+              msg.meta?.mediaType === "manga" &&
+              (msg.meta?.seedManga?.id || msg.meta?.seedTag?.id)
+          );
+
+          if (lastRecommendationMessage?.meta?.seedTag) {
+            mode = "tag";
+            seedTag = lastRecommendationMessage.meta.seedTag;
+
+            excludeIds = getShownMangaIdsFromTagMessages(
+              recentMessages,
+              seedTag.id
+            );
+
+            const tagResults = await searchMangaAdvanced({
+              tagId: seedTag.id,
+              ranking: "top_rated",
+              limit: 25
+            });
+
+            results = filterExcludedManga(tagResults, excludeIds).slice(0, 5);
+
+            if (results.length === 0) {
+              results = tagResults.slice(0, 5);
+            }
+          } else if (lastRecommendationMessage?.meta?.seedManga) {
+            seedManga = lastRecommendationMessage.meta.seedManga;
+            seedTitle = seedManga.title;
+          }
+        }
+
+        if (seedManga && mode !== "tag") {
+          excludeIds = getShownMangaIdsFromMessages(recentMessages, seedManga.id);
+
+          const recommendations = await getMangaRecommendations(
+            seedManga.id,
+            4,
+            excludeIds
+          );
+
+          results = recommendations.length > 0 ? recommendations : [seedManga];
+        }
+
+        if (!seedManga && !seedTag && results.length === 0) {
+          mode = "search";
+          results = await searchManga(cleanMessage, 5);
+        }
+      } else {
+        mode = "search";
+        results = await searchManga(cleanMessage, 5);
+      }
+    } else if (parsed.intent === "characters") {
       mode = "characters";
 
       const animeTitle = characterAnimeTitle || cleanMessage;
@@ -364,8 +600,7 @@ router.post("/", async (req, res) => {
     } else if (parsed.intent === "anime_overview") {
       mode = "overview";
 
-      const animeTitle =
-        animeOverviewTitle || overviewTitle || cleanMessage;
+      const animeTitle = animeOverviewTitle || overviewTitle || cleanMessage;
 
       const overviewResults = await searchAnime(animeTitle, 1);
 
@@ -415,7 +650,7 @@ router.post("/", async (req, res) => {
         const animeOverviewResults = await searchAnime(lookupTitle, 1);
         const exactAnime =
           animeOverviewResults.length > 0 &&
-          isExactAnimeMatch(animeOverviewResults[0], lookupTitle);
+          isExactTitleMatch(animeOverviewResults[0], lookupTitle);
 
         if (exactAnime) {
           mode = "overview";
@@ -504,6 +739,7 @@ router.post("/", async (req, res) => {
         const lastRecommendationMessage = recentMessages.find(
           (msg) =>
             msg.role === "assistant" &&
+            msg.meta?.mediaType !== "manga" &&
             (msg.meta?.seedAnime?.id || msg.meta?.seedTag?.id)
         );
 
@@ -564,9 +800,12 @@ router.post("/", async (req, res) => {
     const contextInfo = {
       source: `${provider}+jikan`,
       mode,
+      mediaType,
       rankingIntent,
+      mangaStatusIntent,
       overviewTitle,
       animeOverviewTitle,
+      mangaOverviewTitle,
       characterAnimeTitle,
       characterName,
       characterDisambiguation,
@@ -575,6 +814,12 @@ router.post("/", async (req, res) => {
         ? {
             id: seedAnime.id,
             title: seedAnime.title
+          }
+        : null,
+      seedManga: seedManga
+        ? {
+            id: seedManga.id,
+            title: seedManga.title
           }
         : null,
       seedCharacter,
@@ -613,12 +858,16 @@ router.post("/", async (req, res) => {
     const ui = buildChatUiAction(cleanMessage, results, contextInfo);
 
     const characterMode = isCharacterMode(mode);
+    const mangaMode = !characterMode && mediaType === "manga";
+    const animeMode = !characterMode && mediaType !== "manga";
 
     const assistantMeta = {
       ...contextInfo,
-      shownAnimeIds: characterMode ? [] : results.map((item) => item.id),
+      shownAnimeIds: animeMode ? results.map((item) => item.id) : [],
+      shownMangaIds: mangaMode ? results.map((item) => item.id) : [],
       shownCharacterIds: characterMode ? results.map((item) => item.id) : [],
-      excludedAnimeIds: excludeIds
+      excludedAnimeIds: animeMode ? excludeIds : [],
+      excludedMangaIds: mangaMode ? excludeIds : []
     };
 
     const assistantMessage = await ChatMessage.create({
@@ -634,20 +883,8 @@ router.post("/", async (req, res) => {
       ui,
       meta: {
         ...assistantMeta,
-        shownAnime: characterMode
-          ? []
-          : results.map((anime) => ({
-              id: anime.id,
-              title: anime.title,
-              type: anime.type,
-              score: anime.score,
-              year: anime.year,
-              season: anime.season,
-              popularity: anime.popularity,
-              rank: anime.rank,
-              genres: anime.genres,
-              themes: anime.themes
-            })),
+        shownAnime: animeMode ? results.map(summarizeAnime) : [],
+        shownManga: mangaMode ? results.map(summarizeManga) : [],
         shownCharacters: characterMode
           ? results.map((character) => ({
               id: character.id,
@@ -707,10 +944,13 @@ router.post("/character-overview", async (req, res) => {
       meta: {
         source: "jikan",
         mode: "character_overview",
+        mediaType: "anime",
         seedCharacter: {
           id: character.id,
           name: character.name
         },
+        shownAnimeIds: [],
+        shownMangaIds: [],
         shownCharacterIds: [character.id]
       }
     });
@@ -725,6 +965,66 @@ router.post("/character-overview", async (req, res) => {
 
     res.status(500).json({
       error: error.message || "Failed to fetch character overview"
+    });
+  }
+});
+
+router.post("/manga-overview", async (req, res) => {
+  try {
+    const { mangaId } = req.body;
+
+    if (!mangaId) {
+      return res.status(400).json({
+        error: "mangaId is required"
+      });
+    }
+
+    const manga = await getMangaById(mangaId);
+
+    if (!manga) {
+      return res.status(404).json({
+        error: "Manga not found"
+      });
+    }
+
+    const reply = `Here is an overview of ${manga.title}.`;
+
+    const ui = {
+      type: "manga_overview",
+      data: {
+        manga
+      }
+    };
+
+    const assistantMessage = await ChatMessage.create({
+      role: "assistant",
+      content: reply,
+      source: "jikan",
+      ui,
+      meta: {
+        source: "jikan",
+        mode: "manga_overview",
+        mediaType: "manga",
+        seedManga: {
+          id: manga.id,
+          title: manga.title
+        },
+        shownAnimeIds: [],
+        shownMangaIds: [manga.id],
+        shownCharacterIds: []
+      }
+    });
+
+    res.json({
+      reply: assistantMessage.content,
+      ui,
+      meta: assistantMessage.meta
+    });
+  } catch (error) {
+    console.error("Manga overview route error:", error.message);
+
+    res.status(500).json({
+      error: error.message || "Failed to fetch manga overview"
     });
   }
 });

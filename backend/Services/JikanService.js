@@ -85,6 +85,242 @@ function normalizeAnime(anime) {
   };
 }
 
+function normalizeCharacter(character) {
+  const jpg = character.images?.jpg;
+  const webp = character.images?.webp;
+
+  return {
+    id: character.mal_id,
+    name: character.name,
+    nameKanji: character.name_kanji,
+    nicknames: character.nicknames || [],
+    about: character.about,
+    favorites: character.favorites || 0,
+    image: webp?.image_url || jpg?.image_url,
+    url: character.url
+  };
+}
+
+function normalizeManga(manga) {
+  const jpg = manga.images?.jpg;
+  const webp = manga.images?.webp;
+
+  return {
+    id: manga.mal_id,
+
+    title: manga.title,
+    titleEnglish: manga.title_english,
+    titleJapanese: manga.title_japanese,
+    titleSynonyms: manga.title_synonyms || [],
+
+    type: manga.type,
+    status: manga.status,
+    publishing: manga.publishing,
+
+    published: {
+      from: manga.published?.from,
+      to: manga.published?.to,
+      string: manga.published?.string
+    },
+
+    chapters: manga.chapters,
+    volumes: manga.volumes,
+
+    score: manga.score,
+    scoredBy: manga.scored_by,
+    rank: manga.rank,
+    popularity: manga.popularity,
+    members: manga.members,
+    favorites: manga.favorites,
+
+    synopsis: manga.synopsis,
+    background: manga.background,
+
+    image:
+      webp?.large_image_url ||
+      jpg?.large_image_url ||
+      webp?.image_url ||
+      jpg?.image_url,
+
+    imageSmall:
+      webp?.small_image_url ||
+      jpg?.small_image_url ||
+      webp?.image_url ||
+      jpg?.image_url,
+
+    imageLarge:
+      webp?.large_image_url ||
+      jpg?.large_image_url ||
+      webp?.image_url ||
+      jpg?.image_url,
+
+    url: manga.url,
+
+    authors: manga.authors?.map((author) => author.name) || [],
+    serializations:
+      manga.serializations?.map((serialization) => serialization.name) || [],
+
+    genres: manga.genres?.map((genre) => genre.name) || [],
+    explicitGenres:
+      manga.explicit_genres?.map((genre) => genre.name) || [],
+    themes: manga.themes?.map((theme) => theme.name) || [],
+    demographics:
+      manga.demographics?.map((demo) => demo.name) || []
+  };
+}
+
+export async function searchManga(query, limit = 5) {
+  try {
+    const url = new URL("https://api.jikan.moe/v4/manga");
+
+    url.searchParams.append("q", query);
+    url.searchParams.append("limit", String(limit));
+    url.searchParams.append("sfw", "true");
+
+    const data = await fetchJson(url, "Jikan manga search");
+
+    return data.data
+      .map(normalizeManga)
+      .filter((manga) => manga.title && manga.image);
+  } catch (error) {
+    console.error("Jikan manga search error:", error.message);
+    throw new Error("Failed to fetch manga data from Jikan API");
+  }
+}
+
+export async function searchMangaAdvanced({
+  tagId = null,
+  year = null,
+  ranking = null,
+  status = null,
+  limit = 10
+}) {
+  try {
+    const url = new URL("https://api.jikan.moe/v4/manga");
+
+    if (tagId) {
+      url.searchParams.append("genres", String(tagId));
+    }
+
+    if (year) {
+      url.searchParams.append("start_date", `${year}-01-01`);
+      url.searchParams.append("end_date", `${year}-12-31`);
+    }
+
+    if (status) {
+      url.searchParams.append("status", status);
+    }
+
+    if (ranking === "popular") {
+      url.searchParams.append("order_by", "popularity");
+      url.searchParams.append("sort", "asc");
+    } else if (ranking === "top_rated") {
+      url.searchParams.append("order_by", "score");
+      url.searchParams.append("sort", "desc");
+      url.searchParams.append("min_score", "7");
+    } else {
+      url.searchParams.append("order_by", "score");
+      url.searchParams.append("sort", "desc");
+      url.searchParams.append("min_score", "7");
+    }
+
+    url.searchParams.append("sfw", "true");
+    url.searchParams.append("limit", String(limit));
+
+    const data = await fetchJson(url, "Jikan advanced manga search");
+
+    return data.data
+      .map(normalizeManga)
+      .filter((manga) => manga.title && manga.image);
+  } catch (error) {
+    console.error("Jikan advanced manga search error:", error.message);
+    throw new Error("Failed to fetch advanced manga search from Jikan API");
+  }
+}
+
+export async function getMangaById(mangaId) {
+  try {
+    const data = await fetchJson(
+      `https://api.jikan.moe/v4/manga/${mangaId}/full`,
+      "Jikan manga detail"
+    );
+
+    return normalizeManga(data.data);
+  } catch (error) {
+    console.error("Jikan manga detail error:", error.message);
+    return null;
+  }
+}
+
+export async function getMangaRecommendations(
+  mangaId,
+  limit = 4,
+  excludeIds = []
+) {
+  try {
+    const excluded = new Set(excludeIds.map(String));
+
+    const data = await fetchJson(
+      `https://api.jikan.moe/v4/manga/${mangaId}/recommendations`,
+      "Jikan manga recommendations"
+    );
+
+    return data.data
+      .slice(0, 20)
+      .map((item) => ({
+        id: item.entry.mal_id,
+        title: item.entry.title,
+        image:
+          item.entry.images?.webp?.image_url ||
+          item.entry.images?.jpg?.image_url,
+        url: item.entry.url
+      }))
+      .filter((manga) => !excluded.has(String(manga.id)))
+      .slice(0, limit);
+  } catch (error) {
+    console.error("Jikan manga recommendations error:", error.message);
+    throw new Error("Failed to fetch manga recommendations from Jikan API");
+  }
+}
+
+export function filterMangaByTag(mangaList, tagName) {
+  if (!tagName) return mangaList;
+
+  const target = tagName.toLowerCase();
+
+  return mangaList.filter((manga) => {
+    const genres = manga.genres || [];
+    const themes = manga.themes || [];
+    const demographics = manga.demographics || [];
+
+    return [...genres, ...themes, ...demographics].some(
+      (item) => item.toLowerCase() === target
+    );
+  });
+}
+
+export function sortMangaList(mangaList, ranking = null) {
+  const list = [...mangaList];
+
+  if (ranking === "popular") {
+    return list.sort((a, b) => {
+      const aPopularity = a.popularity || Number.MAX_SAFE_INTEGER;
+      const bPopularity = b.popularity || Number.MAX_SAFE_INTEGER;
+      return aPopularity - bPopularity;
+    });
+  }
+
+  if (ranking === "top_rated") {
+    return list.sort((a, b) => {
+      const aScore = a.score || 0;
+      const bScore = b.score || 0;
+      return bScore - aScore;
+    });
+  }
+
+  return list;
+}
+
 function isGoodRecommendation(anime) {
   if (!anime) return false;
   if (!anime.title || !anime.image) return false;
@@ -118,6 +354,85 @@ async function fetchJson(url, errorLabel, retries = 2) {
   }
 
   return response.json();
+}
+
+function normalizeForSearch(value = "") {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getSearchTokens(value = "") {
+  return normalizeForSearch(value)
+    .split(" ")
+    .filter(Boolean);
+}
+
+function getCharacterRelevanceScore(character, query) {
+  const queryText = normalizeForSearch(query);
+  const nameText = normalizeForSearch(character.name);
+  const tokens = getSearchTokens(query);
+  const favorites = character.favorites || 0;
+
+  if (!queryText || !nameText) {
+    return favorites;
+  }
+
+  let score = 0;
+
+  // Popularity matters a lot for ambiguous single-name searches.
+  // Example: "Megumi" should allow "Fushiguro, Megumi" to rank higher
+  // than random exact-name "Megumi" characters with very low favorites.
+  score += favorites * 10;
+
+  // Multi-word query means the user is probably specific.
+  // Example: "Megumi Fushiguro"
+  if (tokens.length >= 2) {
+    if (nameText === queryText) {
+      score += 1_000_000;
+    }
+
+    if (tokens.every((token) => nameText.includes(token))) {
+      score += 700_000;
+    }
+
+    if (nameText.includes(queryText)) {
+      score += 300_000;
+    }
+
+    return score;
+  }
+
+  // Single-word query means ambiguous.
+  // Do not over-prioritize exact low-popularity names.
+  if (nameText === queryText) {
+    score += 5_000;
+  }
+
+  if (nameText.startsWith(queryText)) {
+    score += 3_000;
+  }
+
+  if (nameText.includes(queryText)) {
+    score += 10_000;
+  }
+
+  return score;
+}
+
+function sortCharactersByRelevance(characters, query) {
+  return [...characters].sort((a, b) => {
+    const scoreA = getCharacterRelevanceScore(a, query);
+    const scoreB = getCharacterRelevanceScore(b, query);
+
+    if (scoreB !== scoreA) {
+      return scoreB - scoreA;
+    }
+
+    return (b.favorites || 0) - (a.favorites || 0);
+  });
 }
 
 export async function searchAnime(query, limit = 5) {
@@ -354,7 +669,7 @@ export async function getAnimeCharacters(animeId, limit = 12) {
       "Jikan anime characters"
     );
 
-    return data.data.slice(0, limit).map((item) => ({
+    const characters = data.data.map((item) => ({
       id: item.character.mal_id,
       name: item.character.name,
       role: item.role,
@@ -362,7 +677,7 @@ export async function getAnimeCharacters(animeId, limit = 12) {
         item.character.images?.webp?.image_url ||
         item.character.images?.jpg?.image_url,
       url: item.character.url,
-      favorites: item.favorites,
+      favorites: item.favorites || 0,
       voiceActors:
         item.voice_actors?.slice(0, 3).map((va) => ({
           id: va.person.mal_id,
@@ -374,28 +689,19 @@ export async function getAnimeCharacters(animeId, limit = 12) {
           url: va.person.url
         })) || []
     }));
+
+    return characters
+      .sort((a, b) => {
+        if (a.role === "Main" && b.role !== "Main") return -1;
+        if (a.role !== "Main" && b.role === "Main") return 1;
+
+        return (b.favorites || 0) - (a.favorites || 0);
+      })
+      .slice(0, limit);
   } catch (error) {
     console.error("Jikan anime characters error:", error.message);
     throw new Error("Failed to fetch anime characters from Jikan API");
   }
-}
-
-function normalizeCharacter(character) {
-  const jpg = character.images?.jpg;
-  const webp = character.images?.webp;
-
-  return {
-    id: character.mal_id,
-    name: character.name,
-    nameKanji: character.name_kanji,
-    nicknames: character.nicknames || [],
-    about: character.about,
-    favorites: character.favorites,
-    image:
-      webp?.image_url ||
-      jpg?.image_url,
-    url: character.url
-  };
 }
 
 export async function searchCharacters(query, limit = 8) {
@@ -403,13 +709,17 @@ export async function searchCharacters(query, limit = 8) {
     const url = new URL("https://api.jikan.moe/v4/characters");
 
     url.searchParams.append("q", query);
-    url.searchParams.append("limit", String(limit));
+
+    // Fetch more than needed so we can rank locally.
+    url.searchParams.append("limit", String(Math.max(limit, 25)));
 
     const data = await fetchJson(url, "Jikan character search");
 
-    return data.data
+    const characters = data.data
       .map(normalizeCharacter)
       .filter((character) => character.name && character.image);
+
+    return sortCharactersByRelevance(characters, query).slice(0, limit);
   } catch (error) {
     console.error("Jikan character search error:", error.message);
     throw new Error("Failed to search characters from Jikan API");

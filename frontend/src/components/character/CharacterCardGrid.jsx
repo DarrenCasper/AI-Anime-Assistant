@@ -14,7 +14,7 @@ export default function CharacterCardGrid({
         <div className="rounded-2xl border border-violet-400/20 bg-violet-500/10 p-4 text-white">
           <p className="text-sm font-medium">Pick the character you mean</p>
           <p className="mt-1 text-xs text-white/55">
-            I found multiple possible matches.
+            I found multiple possible matches, sorted by popularity.
           </p>
         </div>
       )}
