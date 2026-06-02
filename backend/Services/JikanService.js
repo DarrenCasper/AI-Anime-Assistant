@@ -169,6 +169,40 @@ function normalizeManga(manga) {
   };
 }
 
+function normalizeAnimeEpisode(episode) {
+  return {
+    id: episode.mal_id,
+    number: episode.mal_id,
+    title: episode.title,
+    titleJapanese: episode.title_japanese,
+    titleRomanji: episode.title_romanji,
+    aired: episode.aired,
+    score: episode.score,
+    filler: episode.filler,
+    recap: episode.recap,
+    url: episode.url,
+    forumUrl: episode.forum_url
+  };
+}
+
+export async function getAnimeEpisodes(animeId, limit = 12, page = 1) {
+  try {
+    const url = new URL(`https://api.jikan.moe/v4/anime/${animeId}/episodes`);
+
+    url.searchParams.append("page", String(page));
+
+    const data = await fetchJson(url, "Jikan anime episodes");
+
+    return (data.data || [])
+      .map(normalizeAnimeEpisode)
+      .filter((episode) => episode.title)
+      .slice(0, limit);
+  } catch (error) {
+    console.error("Jikan anime episodes error:", error.message);
+    throw new Error("Failed to fetch anime episodes from Jikan API");
+  }
+}
+
 export async function searchManga(query, limit = 5) {
   try {
     const url = new URL("https://api.jikan.moe/v4/manga");

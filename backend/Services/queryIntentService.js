@@ -534,6 +534,64 @@ export function extractMangaTitle(message) {
   return cleanMangaTitle(cleanMessage);
 }
 
+export function isAnimeTrailerRequest(message) {
+  const text = message.toLowerCase();
+
+  return (
+    text.includes("trailer") ||
+    text.includes("teaser") ||
+    text.includes("pv") ||
+    text.includes("promo video") ||
+    text.includes("promotional video")
+  );
+}
+
+export function isAnimeEpisodesRequest(message) {
+  const text = message.toLowerCase();
+
+  return (
+    text.includes("episodes") ||
+    text.includes("episode list") ||
+    text.includes("list episode") ||
+    text.includes("how many episodes")
+  );
+}
+
+export function extractAnimeTrailerTitle(message) {
+  return cleanAnimeFeatureTitle(
+    message
+      .replace(/show\s+(me\s+)?/gi, "")
+      .replace(/watch\s+/gi, "")
+      .replace(/play\s+/gi, "")
+      .replace(/trailer\s+(for|of)?\s*/gi, "")
+      .replace(/teaser\s+(for|of)?\s*/gi, "")
+      .replace(/promo video\s+(for|of)?\s*/gi, "")
+      .replace(/promotional video\s+(for|of)?\s*/gi, "")
+  );
+}
+
+export function extractAnimeEpisodesTitle(message) {
+  return cleanAnimeFeatureTitle(
+    message
+      .replace(/show\s+(me\s+)?/gi, "")
+      .replace(/episodes?\s+(for|of|from|in)?\s*/gi, "")
+      .replace(/episode list\s+(for|of|from|in)?\s*/gi, "")
+      .replace(/list episodes?\s+(for|of|from|in)?\s*/gi, "")
+      .replace(/how many episodes\s+(does|do|are|is)?\s*/gi, "")
+      .replace(/\bhave\b/gi, "")
+  );
+}
+
+function cleanAnimeFeatureTitle(title) {
+  return title
+    .replace(/\banime\b/gi, "")
+    .replace(/\bplease\b/gi, "")
+    .replace(/\bfor me\b/gi, "")
+    .replace(/[?!.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function parseAnimeRequest(message) {
   const mediaType = extractMediaType(message);
   const tag = extractAnimeTag(message);
@@ -555,11 +613,21 @@ export function parseAnimeRequest(message) {
   const wantsExplicitMangaOverview =
     mediaType === "manga" && isExplicitMangaOverviewRequest(message);
 
+  const wantsAnimeTrailer =
+    mediaType !== "manga" && isAnimeTrailerRequest(message);
+
+  const wantsAnimeEpisodes =
+    mediaType !== "manga" && isAnimeEpisodesRequest(message);
+
   const wantsOverview = isOverviewRequest(message);
 
   let intent = "search";
 
-  if (wantsCharacterList) {
+  if (wantsAnimeTrailer) {
+    intent = "anime_trailer";
+  } else if (wantsAnimeEpisodes) {
+    intent = "anime_episodes";
+  } else if (wantsCharacterList) {
     intent = "characters";
   } else if (wantsExplicitCharacterOverview) {
     intent = "character_overview";
@@ -624,26 +692,36 @@ export function parseAnimeRequest(message) {
 
     animeTitle:
       mediaType !== "manga" &&
-      !tag &&
-      !seasonIntent &&
-      !rankingIntent &&
-      !wantsOverview &&
-      !wantsCharacterList &&
-      !wantsExplicitCharacterOverview &&
-      !wantsExplicitAnimeOverview
+        !tag &&
+        !seasonIntent &&
+        !rankingIntent &&
+        !wantsOverview &&
+        !wantsCharacterList &&
+        !wantsExplicitCharacterOverview &&
+        !wantsExplicitAnimeOverview
         ? extractAnimeTitle(message)
         : "",
 
     mangaTitle:
       mediaType === "manga" &&
-      !tag &&
-      !seasonIntent &&
-      !rankingIntent &&
-      !mangaStatusIntent &&
-      !wantsExplicitMangaOverview &&
-      !wantsOverview
+        !tag &&
+        !seasonIntent &&
+        !rankingIntent &&
+        !mangaStatusIntent &&
+        !wantsExplicitMangaOverview &&
+        !wantsOverview
         ? extractMangaTitle(message)
-        : ""
+        : "",
+    wantsAnimeTrailer,
+    wantsAnimeEpisodes,
+
+    animeTrailerTitle: wantsAnimeTrailer
+      ? extractAnimeTrailerTitle(message)
+      : null,
+
+    animeEpisodesTitle: wantsAnimeEpisodes
+      ? extractAnimeEpisodesTitle(message)
+      : null,
   };
 }
 

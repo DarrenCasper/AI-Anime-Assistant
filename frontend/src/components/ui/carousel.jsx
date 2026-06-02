@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react"
+import { use } from "react"
 import useEmblaCarousel from "embla-carousel-react";
 
 import { cn } from "@/lib/utils"
@@ -9,7 +10,7 @@ import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
 const CarouselContext = React.createContext(null)
 
 function useCarousel() {
-  const context = React.useContext(CarouselContext)
+  const context = use(CarouselContext)
 
   if (!context) {
     throw new Error("useCarousel must be used within a <Carousel />")
@@ -21,7 +22,6 @@ function useCarousel() {
 function Carousel({
   orientation = "horizontal",
   opts,
-  setApi,
   plugins,
   className,
   children,
@@ -59,11 +59,6 @@ function Carousel({
   }, [scrollPrev, scrollNext])
 
   React.useEffect(() => {
-    if (!api || !setApi) return
-    setApi(api)
-  }, [api, setApi])
-
-  React.useEffect(() => {
     if (!api) return
     onSelect(api)
     api.on("reInit", onSelect)
@@ -71,7 +66,8 @@ function Carousel({
 
     return () => {
       api?.off("select", onSelect)
-    };
+      api?.off("reInit", onSelect)
+    }
   }, [api, onSelect])
 
   return (

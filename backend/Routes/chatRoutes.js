@@ -8,6 +8,8 @@ import {
   getSpecificSeasonAnime,
   getAnimeRecommendations,
   getAnimeCharacters,
+  getAnimeById,
+  getAnimeEpisodes,
   searchCharacters,
   getCharacterById,
   filterAnimeByTag,
@@ -209,6 +211,197 @@ function findLastSeedMangaContext(messages) {
   )?.meta?.seedManga;
 }
 
+async function resolveAnimeFromTitleOrContext(title, recentMessages) {
+  const normalizedTitle = normalizeText(title);
+
+  if (["this", "this anime", "it"].includes(normalizedTitle)) {
+    const lastSeedAnime = findLastSeedAnimeContext(recentMessages);
+
+    if (lastSeedAnime?.id) {
+      const detailedAnime = await getAnimeById(lastSeedAnime.id);
+      return detailedAnime || lastSeedAnime;
+    }
+  }
+
+  const animeResults = await searchAnime(title, 1);
+
+  if (animeResults.length === 0) {
+    return null;
+  }
+
+  const detailedAnime = await getAnimeById(animeResults[0].id);
+
+  return detailedAnime || animeResults[0];
+}
+
+function getShownAnimeIdsFromListMessages(messages, context = {}) {
+  const ids = [];
+
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue;
+    if (msg.meta?.mediaType === "manga") continue;
+
+    const sameRanking =
+      (context.rankingIntent || null) === (msg.meta?.rankingIntent || null);
+
+    const sameTag =
+      context.seedTag?.id && msg.meta?.seedTag?.id
+        ? String(context.seedTag.id) === String(msg.meta.seedTag.id)
+        : !context.seedTag?.id && !msg.meta?.seedTag?.id;
+
+    const sameSeason =
+      JSON.stringify(context.seasonIntent || null) ===
+      JSON.stringify(msg.meta?.seasonIntent || null);
+
+    if (!sameRanking || !sameTag || !sameSeason) continue;
+
+    const shownAnimeIds = msg.meta?.shownAnimeIds || [];
+
+    for (const id of shownAnimeIds) {
+      ids.push(id);
+    }
+
+    const items = msg.ui?.data?.items || [];
+
+    for (const item of items) {
+      if (item.id) ids.push(item.id);
+    }
+  }
+
+  return [...new Set(ids.map(String))];
+}
+
+function findLastAnimeContinuationContext(messages) {
+  return messages.find(
+    (msg) =>
+      msg.role === "assistant" &&
+      msg.meta?.mediaType !== "manga" &&
+      (
+        msg.meta?.seedAnime?.id ||
+        msg.meta?.seedTag?.id ||
+        msg.meta?.rankingIntent ||
+        msg.meta?.seasonIntent ||
+        msg.meta?.shownAnimeIds?.length
+      )
+  );
+}
+
+function getShownMangaIdsFromListMessages(messages, context = {}) {
+  const ids = [];
+
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue;
+    if (msg.meta?.mediaType !== "manga") continue;
+
+    const sameRanking =
+      (context.rankingIntent || null) === (msg.meta?.rankingIntent || null);
+
+    const sameStatus =
+      (context.mangaStatusIntent || null) ===
+      (msg.meta?.mangaStatusIntent || null);
+
+    const sameTag =
+      context.seedTag?.id && msg.meta?.seedTag?.id
+        ? String(context.seedTag.id) === String(msg.meta.seedTag.id)
+        : !context.seedTag?.id && !msg.meta?.seedTag?.id;
+
+    if (!sameRanking || !sameStatus || !sameTag) continue;
+
+    const shownMangaIds = msg.meta?.shownMangaIds || [];
+
+    for (const id of shownMangaIds) {
+      ids.push(id);
+    }
+
+    const items = msg.ui?.data?.items || [];
+
+    for (const item of items) {
+      if (item.id) ids.push(item.id);
+    }
+  }
+
+  return [...new Set(ids.map(String))];
+}
+
+function findLastMangaContinuationContext(messages) {
+  return messages.find(
+    (msg) =>
+      msg.role === "assistant" &&
+      msg.meta?.mediaType === "manga" &&
+      (
+        msg.meta?.seedManga?.id ||
+        msg.meta?.seedTag?.id ||
+        msg.meta?.rankingIntent ||
+        msg.meta?.mangaStatusIntent ||
+        msg.meta?.shownMangaIds?.length
+      )
+  );
+}
+
+
+function getExplicitMediaTypeFromMessage(message = "") {
+  const text = message.toLowerCase();
+
+  if (
+    text.includes("manga") ||
+    text.includes("manhwa") ||
+    text.includes("manhua") ||
+    text.includes("webtoon")
+  ) {
+    return "manga";
+  }
+
+  if (text.includes("anime")) {
+    return "anime";
+  }
+
+  return null;
+}
+
+function findLastAssistantMediaContext(messages) {
+  return messages.find(
+    (msg) =>
+      msg.role === "assistant" &&
+      (
+        msg.meta?.mediaType ||
+        msg.meta?.seedManga?.id ||
+        msg.meta?.seedAnime?.id ||
+        msg.meta?.shownMangaIds?.length ||
+        msg.meta?.shownAnimeIds?.length
+      )
+  )?.meta;
+}
+
+function resolveEffectiveMediaType(parsed, message, recentMessages) {
+  const explicitMediaType = getExplicitMediaTypeFromMessage(message);
+
+  if (explicitMediaType) {
+    return explicitMediaType;
+  }
+
+  const lastContext = findLastAssistantMediaContext(recentMessages);
+
+  if (parsed.wantsAnother && lastContext) {
+    if (
+      lastContext.mediaType === "manga" ||
+      lastContext.seedManga?.id ||
+      lastContext.shownMangaIds?.length
+    ) {
+      return "manga";
+    }
+
+    if (
+      lastContext.mediaType === "anime" ||
+      lastContext.seedAnime?.id ||
+      lastContext.shownAnimeIds?.length
+    ) {
+      return "anime";
+    }
+  }
+
+  return parsed.mediaType || "anime";
+}
+
 async function resolveCharacterFromAnimeContext(characterName, recentMessages) {
   const lastSeedAnime = findLastSeedAnimeContext(recentMessages);
 
@@ -408,7 +601,11 @@ router.post("/", async (req, res) => {
       .limit(30);
 
     const parsed = parseAnimeRequest(cleanMessage);
-    const mediaType = parsed.mediaType || "anime";
+    const mediaType = resolveEffectiveMediaType(
+      parsed,
+      cleanMessage,
+      recentMessages
+    );
     const isMangaRequest = mediaType === "manga";
 
     let results = [];
@@ -495,36 +692,68 @@ router.post("/", async (req, res) => {
             seedManga = seedResults[0];
           }
         } else {
-          const lastRecommendationMessage = recentMessages.find(
-            (msg) =>
-              msg.role === "assistant" &&
-              msg.meta?.mediaType === "manga" &&
-              (msg.meta?.seedManga?.id || msg.meta?.seedTag?.id)
-          );
+          const lastRecommendationMessage =
+            findLastMangaContinuationContext(recentMessages);
 
           if (lastRecommendationMessage?.meta?.seedTag) {
             mode = "tag";
             seedTag = lastRecommendationMessage.meta.seedTag;
+            rankingIntent = lastRecommendationMessage.meta.rankingIntent || "top_rated";
+            mangaStatusIntent = lastRecommendationMessage.meta.mangaStatusIntent || null;
 
-            excludeIds = getShownMangaIdsFromTagMessages(
+            excludeIds = getShownMangaIdsFromListMessages(
               recentMessages,
-              seedTag.id
+              lastRecommendationMessage.meta
             );
 
             const tagResults = await searchMangaAdvanced({
               tagId: seedTag.id,
-              ranking: "top_rated",
+              ranking: rankingIntent,
+              status: mangaStatusIntent,
               limit: 25
             });
 
-            results = filterExcludedManga(tagResults, excludeIds).slice(0, 5);
+            const sortedResults = sortMangaList(tagResults, rankingIntent);
+
+            results = filterExcludedManga(sortedResults, excludeIds).slice(0, 5);
 
             if (results.length === 0) {
-              results = tagResults.slice(0, 5);
+              results = sortedResults.slice(0, 5);
             }
           } else if (lastRecommendationMessage?.meta?.seedManga) {
             seedManga = lastRecommendationMessage.meta.seedManga;
             seedTitle = seedManga.title;
+          } else if (
+            lastRecommendationMessage?.meta?.rankingIntent ||
+            lastRecommendationMessage?.meta?.mangaStatusIntent ||
+            lastRecommendationMessage?.meta?.shownMangaIds?.length
+          ) {
+            rankingIntent = lastRecommendationMessage.meta.rankingIntent || rankingIntent;
+            mangaStatusIntent =
+              lastRecommendationMessage.meta.mangaStatusIntent || mangaStatusIntent;
+            seedTag = lastRecommendationMessage.meta.seedTag || null;
+
+            mode = rankingIntent || mangaStatusIntent || "manga_list";
+
+            excludeIds = getShownMangaIdsFromListMessages(
+              recentMessages,
+              lastRecommendationMessage.meta
+            );
+
+            const listResults = await searchMangaAdvanced({
+              tagId: seedTag?.id,
+              ranking: rankingIntent,
+              status: mangaStatusIntent,
+              limit: 25
+            });
+
+            const sortedResults = sortMangaList(listResults, rankingIntent);
+
+            results = filterExcludedManga(sortedResults, excludeIds).slice(0, 5);
+
+            if (results.length === 0) {
+              results = sortedResults.slice(0, 5);
+            }
           }
         }
 
@@ -547,6 +776,40 @@ router.post("/", async (req, res) => {
       } else {
         mode = "search";
         results = await searchManga(cleanMessage, 5);
+      }
+    } else if (parsed.intent === "anime_trailer") {
+      mode = "anime_trailer";
+
+      const animeTitle =
+        parsed.animeTrailerTitle || parsed.animeTitle || cleanMessage;
+
+      seedAnime = await resolveAnimeFromTitleOrContext(
+        animeTitle,
+        recentMessages
+      );
+
+      if (seedAnime) {
+        seedTitle = seedAnime.title;
+        results = [seedAnime];
+      } else {
+        results = [];
+      }
+    } else if (parsed.intent === "anime_episodes") {
+      mode = "anime_episodes";
+
+      const animeTitle =
+        parsed.animeEpisodesTitle || parsed.animeTitle || cleanMessage;
+
+      seedAnime = await resolveAnimeFromTitleOrContext(
+        animeTitle,
+        recentMessages
+      );
+
+      if (seedAnime) {
+        seedTitle = seedAnime.title;
+        results = await getAnimeEpisodes(seedAnime.id, 12);
+      } else {
+        results = [];
       }
     } else if (parsed.intent === "characters") {
       mode = "characters";
@@ -736,36 +999,71 @@ router.post("/", async (req, res) => {
           seedAnime = seedResults[0];
         }
       } else {
-        const lastRecommendationMessage = recentMessages.find(
-          (msg) =>
-            msg.role === "assistant" &&
-            msg.meta?.mediaType !== "manga" &&
-            (msg.meta?.seedAnime?.id || msg.meta?.seedTag?.id)
-        );
+        const lastRecommendationMessage =
+          findLastAnimeContinuationContext(recentMessages);
 
         if (lastRecommendationMessage?.meta?.seedTag) {
           mode = "tag";
           seedTag = lastRecommendationMessage.meta.seedTag;
+          rankingIntent =
+            lastRecommendationMessage.meta.rankingIntent || "top_rated";
+          seasonIntent =
+            lastRecommendationMessage.meta.seasonIntent || seasonIntent;
 
-          excludeIds = getShownAnimeIdsFromTagMessages(
+          excludeIds = getShownAnimeIdsFromListMessages(
             recentMessages,
-            seedTag.id
+            lastRecommendationMessage.meta
           );
 
           const tagResults = await searchAnimeAdvanced({
             tagId: seedTag.id,
-            ranking: "top_rated",
+            year: seasonIntent?.type === "year" ? seasonIntent.year : null,
+            ranking: rankingIntent,
             limit: 25
           });
 
-          results = filterExcludedAnime(tagResults, excludeIds).slice(0, 5);
+          const sortedResults = sortAnimeList(tagResults, rankingIntent);
+
+          results = filterExcludedAnime(sortedResults, excludeIds).slice(0, 5);
 
           if (results.length === 0) {
-            results = tagResults.slice(0, 5);
+            results = sortedResults.slice(0, 5);
           }
         } else if (lastRecommendationMessage?.meta?.seedAnime) {
           seedAnime = lastRecommendationMessage.meta.seedAnime;
           seedTitle = seedAnime.title;
+        } else if (
+          lastRecommendationMessage?.meta?.rankingIntent ||
+          lastRecommendationMessage?.meta?.seasonIntent ||
+          lastRecommendationMessage?.meta?.shownAnimeIds?.length
+        ) {
+          rankingIntent =
+            lastRecommendationMessage.meta.rankingIntent || rankingIntent;
+          seasonIntent =
+            lastRecommendationMessage.meta.seasonIntent || seasonIntent;
+          seedTag = lastRecommendationMessage.meta.seedTag || null;
+
+          mode = rankingIntent || "anime_list";
+
+          excludeIds = getShownAnimeIdsFromListMessages(
+            recentMessages,
+            lastRecommendationMessage.meta
+          );
+
+          const listResults = await searchAnimeAdvanced({
+            tagId: seedTag?.id,
+            year: seasonIntent?.type === "year" ? seasonIntent.year : null,
+            ranking: rankingIntent,
+            limit: 25
+          });
+
+          const sortedResults = sortAnimeList(listResults, rankingIntent);
+
+          results = filterExcludedAnime(sortedResults, excludeIds).slice(0, 5);
+
+          if (results.length === 0) {
+            results = sortedResults.slice(0, 5);
+          }
         }
       }
 
@@ -801,6 +1099,7 @@ router.post("/", async (req, res) => {
       source: `${provider}+jikan`,
       mode,
       mediaType,
+      seedAnimeData: seedAnime || null,
       rankingIntent,
       mangaStatusIntent,
       overviewTitle,
@@ -812,15 +1111,15 @@ router.post("/", async (req, res) => {
       seedTitle,
       seedAnime: seedAnime
         ? {
-            id: seedAnime.id,
-            title: seedAnime.title
-          }
+          id: seedAnime.id,
+          title: seedAnime.title
+        }
         : null,
       seedManga: seedManga
         ? {
-            id: seedManga.id,
-            title: seedManga.title
-          }
+          id: seedManga.id,
+          title: seedManga.title
+        }
         : null,
       seedCharacter,
       seedTag,
@@ -887,16 +1186,16 @@ router.post("/", async (req, res) => {
         shownManga: mangaMode ? results.map(summarizeManga) : [],
         shownCharacters: characterMode
           ? results.map((character) => ({
-              id: character.id,
-              name: character.name,
-              nameKanji: character.nameKanji,
-              nicknames: character.nicknames,
-              favorites: character.favorites,
-              role: character.role,
-              anime: character.anime?.slice(0, 5),
-              manga: character.manga?.slice(0, 5),
-              voiceActors: character.voiceActors?.slice(0, 5)
-            }))
+            id: character.id,
+            name: character.name,
+            nameKanji: character.nameKanji,
+            nicknames: character.nicknames,
+            favorites: character.favorites,
+            role: character.role,
+            anime: character.anime?.slice(0, 5),
+            manga: character.manga?.slice(0, 5),
+            voiceActors: character.voiceActors?.slice(0, 5)
+          }))
           : []
       }
     });

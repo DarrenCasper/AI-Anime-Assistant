@@ -47,32 +47,76 @@ export async function generateOpenAIAnimeResponse(
   });
 
   const compactResults =
-  contextInfo.mode === "characters"
-    ? animeResults.map((character) => ({
+    contextInfo.mode === "characters" || contextInfo.mode === "character_overview"
+      ? animeResults.map((character) => ({
         name: character.name,
         role: character.role,
         favorites: character.favorites,
+        about: character.about?.slice(0, 450),
         voiceActors:
           character.voiceActors?.slice(0, 2).map((va) => ({
             name: va.name,
             language: va.language
+          })) || [],
+        anime:
+          character.anime?.slice(0, 3).map((item) => ({
+            title: item.title,
+            role: item.role
+          })) || [],
+        manga:
+          character.manga?.slice(0, 3).map((item) => ({
+            title: item.title,
+            role: item.role
           })) || []
       }))
-    : animeResults.map((anime) => ({
-        title: anime.title,
-        titleEnglish: anime.titleEnglish,
-        type: anime.type,
-        episodes: anime.episodes,
-        score: anime.score,
-        status: anime.status,
-        year: anime.year,
-        season: anime.season,
-        popularity: anime.popularity,
-        rank: anime.rank,
-        genres: anime.genres,
-        themes: anime.themes,
-        synopsis: anime.synopsis?.slice(0, 450)
-      }));
+      : contextInfo.mode === "anime_episodes"
+        ? animeResults.map((episode) => ({
+          number: episode.number,
+          title: episode.title,
+          titleJapanese: episode.titleJapanese,
+          titleRomanji: episode.titleRomanji,
+          aired: episode.aired,
+          score: episode.score,
+          filler: episode.filler,
+          recap: episode.recap
+        }))
+        : contextInfo.mediaType === "manga"
+          ? animeResults.map((manga) => ({
+            title: manga.title,
+            titleEnglish: manga.titleEnglish,
+            titleJapanese: manga.titleJapanese,
+            type: manga.type,
+            status: manga.status,
+            publishing: manga.publishing,
+            chapters: manga.chapters,
+            volumes: manga.volumes,
+            score: manga.score,
+            popularity: manga.popularity,
+            rank: manga.rank,
+            genres: manga.genres,
+            themes: manga.themes,
+            demographics: manga.demographics,
+            authors: manga.authors,
+            serializations: manga.serializations,
+            synopsis: manga.synopsis?.slice(0, 450)
+          }))
+          : animeResults.map((anime) => ({
+            title: anime.title,
+            titleEnglish: anime.titleEnglish,
+            type: anime.type,
+            episodes: anime.episodes,
+            score: anime.score,
+            status: anime.status,
+            year: anime.year,
+            season: anime.season,
+            popularity: anime.popularity,
+            rank: anime.rank,
+            genres: anime.genres,
+            themes: anime.themes,
+            synopsis: anime.synopsis?.slice(0, 450),
+            trailerUrl: anime.trailerUrl ? "available" : null,
+            trailerEmbedUrl: anime.trailerEmbedUrl ? "available" : null
+          }));
 
   const prompt = `
     You are AniMate, a friendly anime assistant.
@@ -109,19 +153,48 @@ export async function generateOpenAIAnimeResponse(
       Use 5 to 8 characters maximum.
       Do not describe them as anime recommendations.
 
+    - If context mode is "character_overview":
+      Give a short character overview.
+      Explain who the character is, their role, personality/vibe, and notable appearances if available.
+      Do not make a numbered list unless the user asks.
+
     - If context mode is "overview":
       Give a short overview of the single anime.
       Explain the premise, vibe, strengths, and who might enjoy it.
       Do not make a numbered list unless the user asks.
 
-    - If context mode is "recommendation", "tag", "popular", "top_rated", "season", "year", or "list":
-      Start with one natural sentence that matches the user's request.
+    - If context mode is "manga_overview":
+      Give a short overview of the single manga, manhwa, manhua, or webtoon.
+      Explain the premise, vibe, strengths, genre appeal, author/serialization info if available, and who might enjoy it.
+      Mention chapters, volumes, score, or status only if available and useful.
+      Do not make a numbered list unless the user asks.
+
+    - If context mode is "anime_trailer":
+      Write a short paragraph about the anime's trailer or trailer availability.
+      Do not mention the trailer URL, embed URL, API, backend, or that you have access to trailer data.
+      If a trailer is available, explain what the viewer can expect from the anime based on the title, synopsis, genre, and vibe.
+      If trailer data is not available, say naturally that an official trailer does not seem to be available here.
+      Do not make a numbered list.
+
+    - If context mode is "anime_episodes":
+      Start with one natural sentence introducing the episode list.
       Then write a numbered list.
       Format each item exactly like this:
+      1. Episode 1 - Episode Title: short note using aired date, score, filler/recap status, or basic episode info.
+      Use 5 to 8 episodes maximum.
+      Do not claim the user can watch full episodes here.
+      Do not describe episodes as recommendations.
+
+    - If context mode is "recommendation", "tag", "popular", "top_rated", "season", "year", "list", "anime_list", or "manga_list":
+      Start with one natural sentence that matches the user's request.
+      Then write a numbered list.
+      If mediaType is "manga", format each item exactly like this:
+      1. Manga Title: short explanation using the synopsis, vibe, genre, score, status, author, or why it fits.
+      If mediaType is not "manga", format each item exactly like this:
       1. Anime Title: short explanation using the synopsis, vibe, genre, score, or why it fits.
       Use 3 to 5 items maximum.
       End with one short closing sentence.
-
+      
     Final answer:
     `;
 
@@ -143,8 +216,7 @@ export async function generateOpenAIAnimeResponse(
 
   if (response.status === "incomplete") {
     throw new Error(
-      `OpenAI response incomplete: ${
-        response.incomplete_details?.reason || "unknown reason"
+      `OpenAI response incomplete: ${response.incomplete_details?.reason || "unknown reason"
       }`
     );
   }

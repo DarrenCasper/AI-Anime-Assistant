@@ -30,6 +30,25 @@ export function buildChatUiAction(userMessage, results, contextInfo = {}) {
     };
   }
 
+  if (contextInfo.mode === "anime_trailer") {
+    return {
+      type: "anime_trailer",
+      data: {
+        anime: results[0]
+      }
+    };
+  }
+
+  if (contextInfo.mode === "anime_episodes") {
+    return {
+      type: "anime_episodes",
+      data: {
+        anime: contextInfo.seedAnimeData || contextInfo.seedAnime || null,
+        episodes: results
+      }
+    };
+  }
+
   if (isManga && contextInfo.mode === "manga_overview") {
     return {
       type: "manga_overview",
