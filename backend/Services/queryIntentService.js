@@ -558,35 +558,74 @@ export function isAnimeEpisodesRequest(message) {
 }
 
 export function extractAnimeTrailerTitle(message) {
-  return cleanAnimeFeatureTitle(
-    message
-      .replace(/show\s+(me\s+)?/gi, "")
-      .replace(/watch\s+/gi, "")
-      .replace(/play\s+/gi, "")
-      .replace(/trailer\s+(for|of)?\s*/gi, "")
-      .replace(/teaser\s+(for|of)?\s*/gi, "")
-      .replace(/promo video\s+(for|of)?\s*/gi, "")
-      .replace(/promotional video\s+(for|of)?\s*/gi, "")
-  );
+  const cleanMessage = message
+    .replace(/[?!.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const patterns = [
+    /(?:show|play|watch)\s+(?:me\s+)?(?:the\s+)?(?:official\s+)?(?:anime\s+)?(?:trailer|teaser|pv|promo video|promotional video)\s+(?:for|of|from)?\s+(.+)/i,
+    /(?:the\s+)?(?:official\s+)?(?:anime\s+)?(?:trailer|teaser|pv|promo video|promotional video)\s+(?:for|of|from)\s+(.+)/i,
+    /(.+?)\s+(?:anime\s+)?(?:trailer|teaser|pv|promo video|promotional video)$/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleanMessage.match(pattern);
+
+    if (match && match[1]) {
+      return cleanAnimeFeatureTitle(match[1]);
+    }
+  }
+
+  return cleanAnimeFeatureTitle(cleanMessage);
 }
 
 export function extractAnimeEpisodesTitle(message) {
-  return cleanAnimeFeatureTitle(
-    message
-      .replace(/show\s+(me\s+)?/gi, "")
-      .replace(/episodes?\s+(for|of|from|in)?\s*/gi, "")
-      .replace(/episode list\s+(for|of|from|in)?\s*/gi, "")
-      .replace(/list episodes?\s+(for|of|from|in)?\s*/gi, "")
-      .replace(/how many episodes\s+(does|do|are|is)?\s*/gi, "")
-      .replace(/\bhave\b/gi, "")
-  );
+  const cleanMessage = message
+    .replace(/[?!.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const patterns = [
+    /(?:show|list)\s+(?:me\s+)?(?:the\s+)?(?:anime\s+)?episodes?\s+(?:for|of|from|in)?\s+(.+)/i,
+    /(?:show|list)\s+(?:me\s+)?(?:the\s+)?episode list\s+(?:for|of|from|in)?\s+(.+)/i,
+    /(?:how many episodes)\s+(?:does|do|are|is)?\s+(.+?)\s+(?:have|has)?$/i,
+    /(.+?)\s+(?:anime\s+)?episodes?$/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleanMessage.match(pattern);
+
+    if (match && match[1]) {
+      return cleanAnimeFeatureTitle(match[1]);
+    }
+  }
+
+  return cleanAnimeFeatureTitle(cleanMessage);
 }
 
 function cleanAnimeFeatureTitle(title) {
   return title
     .replace(/\banime\b/gi, "")
+    .replace(/\bofficial\b/gi, "")
+    .replace(/\btrailer\b/gi, "")
+    .replace(/\bteaser\b/gi, "")
+    .replace(/\bpv\b/gi, "")
+    .replace(/\bpromo video\b/gi, "")
+    .replace(/\bpromotional video\b/gi, "")
+    .replace(/\bepisodes?\b/gi, "")
+    .replace(/\bepisode list\b/gi, "")
     .replace(/\bplease\b/gi, "")
     .replace(/\bfor me\b/gi, "")
+    .replace(/\bshow me\b/gi, "")
+    .replace(/\bshow\b/gi, "")
+    .replace(/\bwatch\b/gi, "")
+    .replace(/\bplay\b/gi, "")
+    .replace(/\bof\b/gi, "")
+    .replace(/\bfor\b/gi, "")
+    .replace(/\bfrom\b/gi, "")
+    .replace(/\bin\b/gi, "")
+    .replace(/\bthe\b/gi, "")
     .replace(/[?!.,]/g, " ")
     .replace(/\s+/g, " ")
     .trim();

@@ -30,6 +30,16 @@ export function buildChatUiAction(userMessage, results, contextInfo = {}) {
     };
   }
 
+  if(contextInfo.mode === "anime_options"){
+    return{
+      type: "anime_options",
+      data: {
+        items: results,
+        targetAction: contextInfo.targetAction || null
+      }
+    }
+  }
+
   if (contextInfo.mode === "anime_trailer") {
     return {
       type: "anime_trailer",

@@ -6,6 +6,8 @@ import ChatMessage from "@/components/chat/ChatMessage";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
 export default function ChatPage() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -59,6 +61,7 @@ export default function ChatPage() {
                 ...msg,
                 content: data.reply,
                 ui: data.ui,
+                meta: data.meta,
                 animate: true,
                 loading: false
               }
@@ -85,7 +88,7 @@ export default function ChatPage() {
   }
 
   async function handleCharacterSelect(character) {
-    if (!character?.id) return;
+    if (!character?.id || loading) return;
 
     const loadingMessageId = `character-loading-${Date.now()}`;
 
@@ -101,6 +104,8 @@ export default function ChatPage() {
       }
     ]);
 
+    setLoading(true);
+
     try {
       const data = await getCharacterOverview(character.id);
 
@@ -111,6 +116,7 @@ export default function ChatPage() {
                 ...msg,
                 content: data.reply,
                 ui: data.ui,
+                meta: data.meta,
                 animate: false,
                 loading: false
               }
@@ -131,6 +137,94 @@ export default function ChatPage() {
             : msg
         )
       );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAnimeSelect(anime, targetAction = "overview") {
+    if (!anime?.id || loading) return;
+
+    const userText =
+      targetAction === "trailer"
+        ? `Show trailer for ${anime.title}`
+        : targetAction === "episodes"
+          ? `Show episodes for ${anime.title}`
+          : `Show overview for ${anime.title}`;
+
+    const timestamp = Date.now();
+    const loadingMessageId = `anime-action-loading-${timestamp}`;
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `user-anime-action-${timestamp}`,
+        role: "user",
+        content: userText,
+        ui: null,
+        animate: false,
+        loading: false
+      },
+      {
+        id: loadingMessageId,
+        role: "assistant",
+        content: "",
+        ui: null,
+        animate: false,
+        loading: true
+      }
+    ]);
+
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/chat/anime-action`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          animeId: anime.id,
+          action: targetAction
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to load anime action.");
+      }
+
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === loadingMessageId
+            ? {
+                ...msg,
+                content: data.reply,
+                ui: data.ui,
+                meta: data.meta,
+                animate: true,
+                loading: false
+              }
+            : msg
+        )
+      );
+    } catch (error) {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === loadingMessageId
+            ? {
+                ...msg,
+                content: error.message || "Failed to load anime action.",
+                ui: null,
+                animate: true,
+                loading: false
+              }
+            : msg
+        )
+      );
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -216,7 +310,7 @@ export default function ChatPage() {
 
                     <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-white/50">
                       Ask for recommendations, anime overviews, seasonal anime,
-                      popular titles, or characters from a specific anime.
+                      popular titles, trailers, episodes, manga, or characters.
                     </p>
 
                     <div className="mt-5 flex flex-wrap justify-center gap-2">
@@ -224,7 +318,8 @@ export default function ChatPage() {
                         "Recommend anime like Naruto",
                         "Current season romance anime",
                         "Tell me about Jujutsu Kaisen",
-                        "Show me characters in Horimiya"
+                        "Show trailer for Jujutsu Kaisen",
+                        "Show episodes for Jujutsu Kaisen"
                       ].map((text) => (
                         <button
                           key={text}
@@ -245,6 +340,7 @@ export default function ChatPage() {
                   key={message.id}
                   message={message}
                   onCharacterSelect={handleCharacterSelect}
+                  onAnimeSelect={handleAnimeSelect}
                 />
               ))}
 

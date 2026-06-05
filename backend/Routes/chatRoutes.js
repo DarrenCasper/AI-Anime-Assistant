@@ -527,6 +527,190 @@ function buildFallbackResponse(results, mode = "anime", contextInfo = {}) {
   return `I found these ${mediaLabel} that may match your request: ${titles}.`;
 }
 
+function isLowValueAnimeOption(anime) {
+  if (!anime) return true;
+
+  const title = normalizeText(anime.title || "");
+  const type = anime.type || "";
+  const episodes = anime.episodes || 0;
+
+  const blockedTypes = ["Music", "CM", "PV", "ONA", "Special"];
+
+  if (blockedTypes.includes(type)) {
+    return true;
+  }
+
+  // Extra safety for short side entries.
+  if (episodes > 0 && episodes <= 2 && type !== "Movie") {
+    return true;
+  }
+
+  // Hide recap / summary entries.
+  if (
+    title.includes("recap") ||
+    title.includes("recaps") ||
+    title.includes("summary") ||
+    title.includes("digest")
+  ) {
+    return true;
+  }
+
+  // Hide obvious collab / parody / unrelated side entries.
+  if (
+    title.includes("x mlb") ||
+    title.includes("collab") ||
+    title.includes("collaboration") ||
+    title.includes("gakuen") ||
+    title.includes("school")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function getAnimeSearchText(anime) {
+  return normalizeText(
+    [
+      anime.title,
+      anime.titleEnglish,
+      anime.titleJapanese,
+      ...(anime.titleSynonyms || [])
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+}
+
+function getMeaningfulTitleTokens(query = "") {
+  return getTokens(query).filter(
+    (token) =>
+      ![
+        "anime",
+        "show",
+        "tell",
+        "about",
+        "overview",
+        "trailer",
+        "episodes",
+        "episode",
+        "for",
+        "of",
+        "the",
+        "me",
+        "please"
+      ].includes(token)
+  );
+}
+
+function isRelevantAnimeOption(anime, query = "") {
+  const tokens = getMeaningfulTitleTokens(query);
+  const searchText = getAnimeSearchText(anime);
+
+  if (tokens.length === 0) return false;
+
+  // For short queries, require all tokens.
+  if (tokens.length <= 2) {
+    return tokens.every((token) => searchText.includes(token));
+  }
+
+  // For longer titles like "kimetsu no yaiba", allow one token miss,
+  // but still require most of the real title tokens to match.
+  const matchedCount = tokens.filter((token) => searchText.includes(token)).length;
+
+  return matchedCount >= Math.max(2, tokens.length - 1);
+}
+
+function scoreAnimeOption(anime, query = "") {
+  const queryText = normalizeText(query);
+  const titleText = normalizeText(anime.title || "");
+  const englishText = normalizeText(anime.titleEnglish || "");
+  const synonymText = normalizeText((anime.titleSynonyms || []).join(" "));
+  const searchableText = `${titleText} ${englishText} ${synonymText}`;
+
+  let score = 0;
+
+  if (titleText === queryText) score += 1000;
+  if (englishText === queryText) score += 900;
+  if (titleText.includes(queryText)) score += 400;
+  if (searchableText.includes(queryText)) score += 250;
+
+  if (anime.type === "TV") score += 120;
+  if (anime.type === "Movie") score += 90;
+  if (anime.type === "ONA") score += 50;
+  if (anime.type === "OVA") score += 30;
+
+  if (anime.year) score += Math.min(Number(anime.year) - 1990, 80);
+  if (anime.score) score += Number(anime.score) * 10;
+  if (anime.popularity) score += Math.max(0, 10000 - anime.popularity) / 100;
+
+  return score;
+}
+
+function getRelevantAnimeOptions(candidates = [], query = "", limit = 12) {
+  const relevant = candidates
+    .filter((anime) => !isLowValueAnimeOption(anime))
+    .filter((anime) => isRelevantAnimeOption(anime, query))
+    .sort((a, b) => scoreAnimeOption(b, query) - scoreAnimeOption(a, query));
+
+  return relevant.slice(0, limit);
+}
+
+function shouldShowAnimeOptions(candidates = [], query = "") {
+  const relevant = getRelevantAnimeOptions(candidates, query, 12);
+  return relevant.length >= 2;
+}
+
+
+async function resolveAnimeChoiceOrSingle(title, recentMessages, targetAction) {
+  const normalizedTitle = normalizeText(title);
+
+  if (["this", "this anime", "it"].includes(normalizedTitle)) {
+    const lastSeedAnime = findLastSeedAnimeContext(recentMessages);
+
+    if (lastSeedAnime?.id) {
+      const detailedAnime = await getAnimeById(lastSeedAnime.id);
+
+      return {
+        type: "single",
+        anime: detailedAnime || lastSeedAnime,
+        options: [],
+        targetAction
+      };
+    }
+  }
+
+  const candidates = await searchAnime(title, 25);
+  const options = getRelevantAnimeOptions(candidates, title, 12);
+
+  if (options.length === 0) {
+    return {
+      type: "none",
+      anime: null,
+      options: [],
+      targetAction
+    };
+  }
+
+  if (options.length >= 2) {
+    return {
+      type: "options",
+      anime: null,
+      options,
+      targetAction
+    };
+  }
+
+  const detailedAnime = await getAnimeById(options[0].id);
+
+  return {
+    type: "single",
+    anime: detailedAnime || options[0],
+    options: [],
+    targetAction
+  };
+}
+
 function isAiLimitError(error) {
   const message = error.message?.toLowerCase() || "";
 
@@ -632,6 +816,7 @@ router.post("/", async (req, res) => {
 
     let excludeIds = [];
     let tagFilterMatched = null;
+    let targetAction = null;
 
     if (isMangaRequest) {
       if (parsed.intent === "manga_overview" || parsed.intent === "overview") {
@@ -778,37 +963,49 @@ router.post("/", async (req, res) => {
         results = await searchManga(cleanMessage, 5);
       }
     } else if (parsed.intent === "anime_trailer") {
-      mode = "anime_trailer";
-
       const animeTitle =
         parsed.animeTrailerTitle || parsed.animeTitle || cleanMessage;
 
-      seedAnime = await resolveAnimeFromTitleOrContext(
+      const resolvedAnime = await resolveAnimeChoiceOrSingle(
         animeTitle,
-        recentMessages
+        recentMessages,
+        "trailer"
       );
 
-      if (seedAnime) {
+      if (resolvedAnime.type === "options") {
+        mode = "anime_options";
+        targetAction = "trailer";
+        results = resolvedAnime.options;
+      } else if (resolvedAnime.type === "single") {
+        mode = "anime_trailer";
+        seedAnime = resolvedAnime.anime;
         seedTitle = seedAnime.title;
         results = [seedAnime];
       } else {
+        mode = "anime_trailer";
         results = [];
       }
     } else if (parsed.intent === "anime_episodes") {
-      mode = "anime_episodes";
-
       const animeTitle =
         parsed.animeEpisodesTitle || parsed.animeTitle || cleanMessage;
 
-      seedAnime = await resolveAnimeFromTitleOrContext(
+      const resolvedAnime = await resolveAnimeChoiceOrSingle(
         animeTitle,
-        recentMessages
+        recentMessages,
+        "episodes"
       );
 
-      if (seedAnime) {
+      if (resolvedAnime.type === "options") {
+        mode = "anime_options";
+        targetAction = "episodes";
+        results = resolvedAnime.options;
+      } else if (resolvedAnime.type === "single") {
+        mode = "anime_episodes";
+        seedAnime = resolvedAnime.anime;
         seedTitle = seedAnime.title;
         results = await getAnimeEpisodes(seedAnime.id, 12);
       } else {
+        mode = "anime_episodes";
         results = [];
       }
     } else if (parsed.intent === "characters") {
@@ -861,13 +1058,27 @@ router.post("/", async (req, res) => {
         }
       }
     } else if (parsed.intent === "anime_overview") {
-      mode = "overview";
-
       const animeTitle = animeOverviewTitle || overviewTitle || cleanMessage;
 
-      const overviewResults = await searchAnime(animeTitle, 1);
+      const resolvedAnime = await resolveAnimeChoiceOrSingle(
+        animeTitle,
+        recentMessages,
+        "overview"
+      );
 
-      results = overviewResults.length > 0 ? [overviewResults[0]] : [];
+      if (resolvedAnime.type === "options") {
+        mode = "anime_options";
+        targetAction = "overview";
+        results = resolvedAnime.options;
+      } else if (resolvedAnime.type === "single") {
+        mode = "overview";
+        seedAnime = resolvedAnime.anime;
+        seedTitle = seedAnime.title;
+        results = [seedAnime];
+      } else {
+        mode = "overview";
+        results = [];
+      }
     } else if (parsed.intent === "overview") {
       const lookupTitle = parsed.lookupTitle || overviewTitle || cleanMessage;
       const lookupTokens = getTokens(lookupTitle);
@@ -1099,6 +1310,7 @@ router.post("/", async (req, res) => {
       source: `${provider}+jikan`,
       mode,
       mediaType,
+      targetAction,
       seedAnimeData: seedAnime || null,
       rankingIntent,
       mangaStatusIntent,
@@ -1324,6 +1536,116 @@ router.post("/manga-overview", async (req, res) => {
 
     res.status(500).json({
       error: error.message || "Failed to fetch manga overview"
+    });
+  }
+});
+
+router.post("/anime-action", async (req, res) => {
+  try {
+    const { animeId, action } = req.body;
+
+    if (!animeId) {
+      return res.status(400).json({
+        error: "animeId is required"
+      });
+    }
+
+    if (!["overview", "trailer", "episodes"].includes(action)) {
+      return res.status(400).json({
+        error: "Valid action is required: overview, trailer, or episodes"
+      });
+    }
+
+    const anime = await getAnimeById(animeId);
+
+    if (!anime) {
+      return res.status(404).json({
+        error: "Anime not found"
+      });
+    }
+
+    let mode = "overview";
+    let results = [anime];
+
+    if (action === "trailer") {
+      mode = "anime_trailer";
+      results = [anime];
+    }
+
+    if (action === "episodes") {
+      mode = "anime_episodes";
+      results = await getAnimeEpisodes(anime.id, 12);
+    }
+
+    const provider = process.env.AI_PROVIDER || "gemini";
+
+    const contextInfo = {
+      source: `${provider}+jikan`,
+      mode,
+      mediaType: "anime",
+      targetAction: action,
+      seedAnimeData: anime,
+      seedAnime: {
+        id: anime.id,
+        title: anime.title
+      },
+      seedTitle: anime.title,
+      resultCount: results.length
+    };
+
+    let assistantText;
+
+    try {
+      assistantText = await generateAIAnimeResponse(
+        `Show ${action} for ${anime.title}`,
+        results,
+        "",
+        contextInfo
+      );
+    } catch (error) {
+      console.error("AI provider error:", error.message);
+
+      if (!isAiLimitError(error)) {
+        throw error;
+      }
+
+      assistantText = buildFallbackResponse(results, mode, contextInfo);
+    }
+
+    if (!assistantText || !assistantText.trim()) {
+      assistantText = buildFallbackResponse(results, mode, contextInfo);
+    }
+
+    const ui = buildChatUiAction(
+      `Show ${action} for ${anime.title}`,
+      results,
+      contextInfo
+    );
+
+    const assistantMessage = await ChatMessage.create({
+      role: "assistant",
+      content: assistantText,
+      source: contextInfo.source,
+      ui,
+      meta: {
+        ...contextInfo,
+        shownAnimeIds:
+          mode === "anime_episodes" ? [anime.id] : results.map((item) => item.id),
+        shownMangaIds: [],
+        shownCharacterIds: []
+      }
+    });
+
+    res.json({
+      reply: assistantMessage.content,
+      ui,
+      meta: assistantMessage.meta
+    });
+  } catch (error) {
+    console.error("Anime action route error:", error.message);
+
+    res.status(500).json({
+      error: error.message || "Failed to run anime action"
     });
   }
 });

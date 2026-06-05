@@ -80,29 +80,12 @@ export async function generateOpenAIAnimeResponse(
           filler: episode.filler,
           recap: episode.recap
         }))
-        : contextInfo.mediaType === "manga"
-          ? animeResults.map((manga) => ({
-            title: manga.title,
-            titleEnglish: manga.titleEnglish,
-            titleJapanese: manga.titleJapanese,
-            type: manga.type,
-            status: manga.status,
-            publishing: manga.publishing,
-            chapters: manga.chapters,
-            volumes: manga.volumes,
-            score: manga.score,
-            popularity: manga.popularity,
-            rank: manga.rank,
-            genres: manga.genres,
-            themes: manga.themes,
-            demographics: manga.demographics,
-            authors: manga.authors,
-            serializations: manga.serializations,
-            synopsis: manga.synopsis?.slice(0, 450)
-          }))
-          : animeResults.map((anime) => ({
+        : contextInfo.mode === "anime_options"
+          ? animeResults.map((anime) => ({
             title: anime.title,
             titleEnglish: anime.titleEnglish,
+            titleJapanese: anime.titleJapanese,
+            titleSynonyms: anime.titleSynonyms,
             type: anime.type,
             episodes: anime.episodes,
             score: anime.score,
@@ -113,10 +96,45 @@ export async function generateOpenAIAnimeResponse(
             rank: anime.rank,
             genres: anime.genres,
             themes: anime.themes,
-            synopsis: anime.synopsis?.slice(0, 450),
-            trailerUrl: anime.trailerUrl ? "available" : null,
-            trailerEmbedUrl: anime.trailerEmbedUrl ? "available" : null
-          }));
+            synopsis: anime.synopsis?.slice(0, 250)
+          }))
+          : contextInfo.mediaType === "manga"
+            ? animeResults.map((manga) => ({
+              title: manga.title,
+              titleEnglish: manga.titleEnglish,
+              titleJapanese: manga.titleJapanese,
+              type: manga.type,
+              status: manga.status,
+              publishing: manga.publishing,
+              chapters: manga.chapters,
+              volumes: manga.volumes,
+              score: manga.score,
+              popularity: manga.popularity,
+              rank: manga.rank,
+              genres: manga.genres,
+              themes: manga.themes,
+              demographics: manga.demographics,
+              authors: manga.authors,
+              serializations: manga.serializations,
+              synopsis: manga.synopsis?.slice(0, 450)
+            }))
+            : animeResults.map((anime) => ({
+              title: anime.title,
+              titleEnglish: anime.titleEnglish,
+              type: anime.type,
+              episodes: anime.episodes,
+              score: anime.score,
+              status: anime.status,
+              year: anime.year,
+              season: anime.season,
+              popularity: anime.popularity,
+              rank: anime.rank,
+              genres: anime.genres,
+              themes: anime.themes,
+              synopsis: anime.synopsis?.slice(0, 450),
+              trailerUrl: anime.trailerUrl ? "available" : null,
+              trailerEmbedUrl: anime.trailerEmbedUrl ? "available" : null
+            }));;
 
   const prompt = `
     You are AniMate, a friendly anime assistant.
@@ -194,6 +212,13 @@ export async function generateOpenAIAnimeResponse(
       1. Anime Title: short explanation using the synopsis, vibe, genre, score, or why it fits.
       Use 3 to 5 items maximum.
       End with one short closing sentence.
+
+    - If context mode is "anime_options":
+      The user asked for an anime title that may refer to multiple entries.
+      Do not give an overview, recommendation, trailer explanation, or episode list yet.
+      Tell the user that multiple matching anime entries were found and ask them to choose the exact version.
+      Mention that the cards below contain the selectable options.
+      Keep the response to 1 short sentence.
       
     Final answer:
     `;

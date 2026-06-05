@@ -2,13 +2,28 @@ import AnimeCardGrid from "../anime/AnimeCardGrid";
 import AnimeOverview from "../anime/AnimeOverview";
 import AnimeTrailer from "../anime/AnimeTrailer";
 import AnimeEpisodes from "../anime/AnimeEpisodes";
+import AnimeOptionGrid from "../anime/AnimeOptionGrid";
 import MangaCardGrid from "../manga/MangaCardGrid";
 import MangaOverview from "../manga/MangaOverview";
 import CharacterCardGrid from "../character/CharacterCardGrid";
 import CharacterOverview from "../character/CharacterOverview";
 
-export default function ChatActionRenderer({ ui, onCharacterSelect }) {
+export default function ChatActionRenderer({
+  ui,
+  onCharacterSelect,
+  onAnimeSelect
+}) {
   if (!ui || ui.type === "none") return null;
+
+  if (ui.type === "anime_options") {
+    return (
+      <AnimeOptionGrid
+        items={ui.data?.items || []}
+        targetAction={ui.data?.targetAction || "overview"}
+        onAnimeSelect={onAnimeSelect}
+      />
+    );
+  }
 
   if (ui.type === "anime_cards") {
     return <AnimeCardGrid items={ui.data?.items || []} />;
