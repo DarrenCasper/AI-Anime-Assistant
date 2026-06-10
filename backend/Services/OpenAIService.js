@@ -69,72 +69,113 @@ export async function generateOpenAIAnimeResponse(
             role: item.role
           })) || []
       }))
-      : contextInfo.mode === "anime_episodes"
-        ? animeResults.map((episode) => ({
-          number: episode.number,
-          title: episode.title,
-          titleJapanese: episode.titleJapanese,
-          titleRomanji: episode.titleRomanji,
-          aired: episode.aired,
-          score: episode.score,
-          filler: episode.filler,
-          recap: episode.recap
+      : contextInfo.mode === "person_options"
+        ? animeResults.map((person) => ({
+          name: person.name,
+          givenName: person.givenName,
+          familyName: person.familyName,
+          alternateNames: person.alternateNames,
+          favorites: person.favorites,
+          about: person.about?.slice(0, 250)
         }))
-        : contextInfo.mode === "anime_options"
-          ? animeResults.map((anime) => ({
-            title: anime.title,
-            titleEnglish: anime.titleEnglish,
-            titleJapanese: anime.titleJapanese,
-            titleSynonyms: anime.titleSynonyms,
-            type: anime.type,
-            episodes: anime.episodes,
-            score: anime.score,
-            status: anime.status,
-            year: anime.year,
-            season: anime.season,
-            popularity: anime.popularity,
-            rank: anime.rank,
-            genres: anime.genres,
-            themes: anime.themes,
-            synopsis: anime.synopsis?.slice(0, 250)
+        : contextInfo.mode === "person_overview"
+          ? animeResults.map((person) => ({
+            name: person.name,
+            givenName: person.givenName,
+            familyName: person.familyName,
+            alternateNames: person.alternateNames,
+            birthday: person.birthday,
+            favorites: person.favorites,
+            about: person.about?.slice(0, 700),
+            voices:
+              person.voices?.slice(0, 8).map((role) => ({
+                anime: role.anime?.title,
+                character: role.character?.name,
+                role: role.role
+              })) || [],
+            anime:
+              person.anime?.slice(0, 5).map((item) => ({
+                title: item.title,
+                position: item.position
+              })) || [],
+            manga:
+              person.manga?.slice(0, 3).map((item) => ({
+                title: item.title,
+                position: item.position
+              })) || []
           }))
-          : contextInfo.mediaType === "manga"
-            ? animeResults.map((manga) => ({
-              title: manga.title,
-              titleEnglish: manga.titleEnglish,
-              titleJapanese: manga.titleJapanese,
-              type: manga.type,
-              status: manga.status,
-              publishing: manga.publishing,
-              chapters: manga.chapters,
-              volumes: manga.volumes,
-              score: manga.score,
-              popularity: manga.popularity,
-              rank: manga.rank,
-              genres: manga.genres,
-              themes: manga.themes,
-              demographics: manga.demographics,
-              authors: manga.authors,
-              serializations: manga.serializations,
-              synopsis: manga.synopsis?.slice(0, 450)
+          : contextInfo.mode === "person_voice_roles"
+            ? animeResults.map((role) => ({
+              anime: role.anime?.title,
+              character: role.character?.name,
+              role: role.role
             }))
-            : animeResults.map((anime) => ({
-              title: anime.title,
-              titleEnglish: anime.titleEnglish,
-              type: anime.type,
-              episodes: anime.episodes,
-              score: anime.score,
-              status: anime.status,
-              year: anime.year,
-              season: anime.season,
-              popularity: anime.popularity,
-              rank: anime.rank,
-              genres: anime.genres,
-              themes: anime.themes,
-              synopsis: anime.synopsis?.slice(0, 450),
-              trailerUrl: anime.trailerUrl ? "available" : null,
-              trailerEmbedUrl: anime.trailerEmbedUrl ? "available" : null
-            }));;
+            : contextInfo.mode === "anime_episodes"
+              ? animeResults.map((episode) => ({
+                number: episode.number,
+                title: episode.title,
+                titleJapanese: episode.titleJapanese,
+                titleRomanji: episode.titleRomanji,
+                aired: episode.aired,
+                score: episode.score,
+                filler: episode.filler,
+                recap: episode.recap
+              }))
+              : contextInfo.mode === "anime_options"
+                ? animeResults.map((anime) => ({
+                  title: anime.title,
+                  titleEnglish: anime.titleEnglish,
+                  titleJapanese: anime.titleJapanese,
+                  titleSynonyms: anime.titleSynonyms,
+                  type: anime.type,
+                  episodes: anime.episodes,
+                  score: anime.score,
+                  status: anime.status,
+                  year: anime.year,
+                  season: anime.season,
+                  popularity: anime.popularity,
+                  rank: anime.rank,
+                  genres: anime.genres,
+                  themes: anime.themes,
+                  synopsis: anime.synopsis?.slice(0, 250)
+                }))
+                : contextInfo.mediaType === "manga"
+                  ? animeResults.map((manga) => ({
+                    title: manga.title,
+                    titleEnglish: manga.titleEnglish,
+                    titleJapanese: manga.titleJapanese,
+                    type: manga.type,
+                    status: manga.status,
+                    publishing: manga.publishing,
+                    chapters: manga.chapters,
+                    volumes: manga.volumes,
+                    score: manga.score,
+                    popularity: manga.popularity,
+                    rank: manga.rank,
+                    genres: manga.genres,
+                    themes: manga.themes,
+                    demographics: manga.demographics,
+                    authors: manga.authors,
+                    serializations: manga.serializations,
+                    synopsis: manga.synopsis?.slice(0, 450)
+                  }))
+                  : animeResults.map((anime) => ({
+                    title: anime.title,
+                    titleEnglish: anime.titleEnglish,
+                    type: anime.type,
+                    episodes: anime.episodes,
+                    score: anime.score,
+                    status: anime.status,
+                    year: anime.year,
+                    season: anime.season,
+                    popularity: anime.popularity,
+                    rank: anime.rank,
+                    genres: anime.genres,
+                    themes: anime.themes,
+                    synopsis: anime.synopsis?.slice(0, 450),
+                    trailerUrl: anime.trailerUrl ? "available" : null,
+                    trailerEmbedUrl: anime.trailerEmbedUrl ? "available" : null
+                  }));
 
   const prompt = `
     You are AniMate, a friendly anime assistant.
@@ -220,6 +261,26 @@ export async function generateOpenAIAnimeResponse(
       Mention that the cards below contain the selectable options.
       Keep the response to 1 short sentence.
       
+      - If context mode is "person_options":
+      The user asked for a voice actor, voice actress, or seiyuu name that may match multiple people.
+      Do not give a biography yet.
+      Tell the user that multiple matching people were found and ask them to choose from the cards below.
+      Keep the response to 1 short sentence.
+
+    - If context mode is "person_overview":
+      Give a short overview of the voice actor, voice actress, or seiyuu.
+      Mention their name, basic bio details if available, and a few notable anime voice roles if available.
+      Do not make a long biography.
+      Do not invent roles.
+
+    - If context mode is "person_voice_roles":
+      Start with one natural sentence introducing the voice roles.
+      Then write a numbered list.
+      Format each item exactly like this:
+      1. Anime Title: voices Character Name as role type if available.
+      Use 5 to 10 items maximum.
+      Do not invent anime titles or characters.
+
     Final answer:
     `;
 

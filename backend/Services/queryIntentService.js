@@ -631,12 +631,142 @@ function cleanAnimeFeatureTitle(title) {
     .trim();
 }
 
+export function isPersonOverviewRequest(message) {
+  const text = message.toLowerCase();
+
+  return (
+    text.includes("voice actor") ||
+    text.includes("voice actress") ||
+    text.includes("seiyuu") ||
+    text.includes("seiyu") ||
+    text.includes("va ") ||
+    text.startsWith("va ") ||
+    text.includes(" who is ") ||
+    text.startsWith("who is ") ||
+    text.startsWith("do you know about ")
+  );
+}
+
+export function isPersonVoiceRolesRequest(message) {
+  const text = message.toLowerCase();
+
+  const hasVoiceRolePhrase =
+    text.includes("what anime does") ||
+    text.includes("which anime does") ||
+    text.includes("what anime is") ||
+    text.includes("which anime is") ||
+    text.includes("anime voiced by") ||
+    text.includes("voiced by") ||
+    text.includes("voice roles") ||
+    text.includes("roles of") ||
+    text.includes("voices in") ||
+    text.includes("voice in") ||
+    text.includes("voice for") ||
+    text.includes("voiced in") ||
+    text.includes("voiced for");
+
+  const hasPersonVoiceContext =
+    text.includes("voice actor") ||
+    text.includes("voice actress") ||
+    text.includes("seiyuu") ||
+    text.includes("seiyu") ||
+    text.includes("va ") ||
+    text.startsWith("va ") ||
+    text.includes("voiced by") ||
+    text.includes("voices") ||
+    text.includes("voice ") ||
+    text.includes("voice roles") ||
+    text.includes("voice in") ||
+    text.includes("voice for");
+
+  return hasVoiceRolePhrase && hasPersonVoiceContext;
+}
+
+export function extractPersonOverviewName(message) {
+  const cleanMessage = message
+    .replace(/[?!.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const patterns = [
+    /do you know about (?:the\s+)?(?:voice actor|voice actress|seiyuu|seiyu|va)\s+(.+)/i,
+    /tell me about (?:the\s+)?(?:voice actor|voice actress|seiyuu|seiyu|va)\s+(.+)/i,
+    /who is (?:the\s+)?(?:voice actor|voice actress|seiyuu|seiyu|va)\s+(.+)/i,
+    /(?:voice actor|voice actress|seiyuu|seiyu|va)\s+(.+)/i,
+    /do you know about\s+(.+)/i,
+    /who is\s+(.+)/i,
+    /tell me about\s+(.+)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleanMessage.match(pattern);
+
+    if (match && match[1]) {
+      return cleanPersonName(match[1]);
+    }
+  }
+
+  return cleanPersonName(cleanMessage);
+}
+
+export function extractPersonVoiceRolesName(message) {
+  const cleanMessage = message
+    .replace(/[?!.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const patterns = [
+    /what anime does\s+(.+?)\s+(?:voice in|voice for|voice|voices in|voices for|star in|act in)/i,
+    /which anime does\s+(.+?)\s+(?:voice in|voice for|voice|voices in|voices for|star in|act in)/i,
+    /what anime is\s+(.+?)\s+in/i,
+    /which anime is\s+(.+?)\s+in/i,
+    /anime voiced by\s+(.+)/i,
+    /voiced by\s+(.+)/i,
+    /voice roles? (?:of|for)\s+(.+)/i,
+    /(?:voice actor|voice actress|seiyuu|seiyu|va)\s+roles? (?:of|for)?\s*(.+)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleanMessage.match(pattern);
+
+    if (match && match[1]) {
+      return cleanPersonName(match[1]);
+    }
+  }
+
+  return cleanPersonName(cleanMessage);
+}
+
+function cleanPersonName(name) {
+  return name
+    .replace(/\bvoice actor\b/gi, "")
+    .replace(/\bvoice actress\b/gi, "")
+    .replace(/\bseiyuu\b/gi, "")
+    .replace(/\bseiyu\b/gi, "")
+    .replace(/\bva\b/gi, "")
+    .replace(/\banime\b/gi, "")
+    .replace(/\broles?\b/gi, "")
+    .replace(/\bvoiced by\b/gi, "")
+    .replace(/\bvoice roles?\b/gi, "")
+    .replace(/\bvoice in\b/gi, "")
+    .replace(/\bvoice for\b/gi, "")
+    .replace(/\bvoices in\b/gi, "")
+    .replace(/\bvoices for\b/gi, "")
+    .replace(/\bplease\b/gi, "")
+    .replace(/\bfor me\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function parseAnimeRequest(message) {
   const mediaType = extractMediaType(message);
   const tag = extractAnimeTag(message);
   const seasonIntent = extractSeasonIntent(message);
   const mangaStatusIntent = extractMangaStatusIntent(message);
   const rankingIntent = extractRankingIntent(message);
+  const wantsPersonVoiceRoles = isPersonVoiceRolesRequest(message);
+  const wantsPersonOverview =
+    !wantsPersonVoiceRoles && isPersonOverviewRequest(message);
 
   const wantsAnother = isAnotherRecommendationRequest(message);
 
@@ -662,7 +792,13 @@ export function parseAnimeRequest(message) {
 
   let intent = "search";
 
-  if (wantsAnimeTrailer) {
+  if (wantsPersonVoiceRoles) {
+    intent = "person_voice_roles";
+  } else if (wantsPersonOverview) {
+    intent = "person_overview";
+  } else if (wantsAnimeTrailer) {
+    intent = "anime_trailer";
+  } else if (wantsAnimeTrailer) {
     intent = "anime_trailer";
   } else if (wantsAnimeEpisodes) {
     intent = "anime_episodes";
@@ -761,6 +897,15 @@ export function parseAnimeRequest(message) {
     animeEpisodesTitle: wantsAnimeEpisodes
       ? extractAnimeEpisodesTitle(message)
       : null,
+
+    wantsPersonOverview,
+    wantsPersonVoiceRoles,
+
+    personName: wantsPersonOverview
+      ? extractPersonOverviewName(message)
+      : wantsPersonVoiceRoles
+        ? extractPersonVoiceRolesName(message)
+        : null,
   };
 }
 

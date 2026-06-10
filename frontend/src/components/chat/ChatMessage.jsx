@@ -5,7 +5,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function ChatMessage({
   message,
   onCharacterSelect,
-  onAnimeSelect
+  onAnimeSelect,
+  onPersonSelect
 }) {
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
@@ -49,6 +50,7 @@ export default function ChatMessage({
             ui={message.ui}
             onCharacterSelect={onCharacterSelect}
             onAnimeSelect={onAnimeSelect}
+            onPersonSelect={onPersonSelect}
           />
         )}
       </div>

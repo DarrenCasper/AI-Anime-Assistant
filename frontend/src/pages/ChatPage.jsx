@@ -5,6 +5,7 @@ import ChatInput from "@/components/chat/ChatInput";
 import ChatMessage from "@/components/chat/ChatMessage";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { getPersonAction } from "@/api/personApi";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
@@ -58,13 +59,13 @@ export default function ChatPage() {
         prev.map((msg) =>
           msg.id === loadingMessageId
             ? {
-                ...msg,
-                content: data.reply,
-                ui: data.ui,
-                meta: data.meta,
-                animate: true,
-                loading: false
-              }
+              ...msg,
+              content: data.reply,
+              ui: data.ui,
+              meta: data.meta,
+              animate: true,
+              loading: false
+            }
             : msg
         )
       );
@@ -73,12 +74,12 @@ export default function ChatPage() {
         prev.map((msg) =>
           msg.id === loadingMessageId
             ? {
-                ...msg,
-                content: error.message || "Something went wrong.",
-                ui: null,
-                animate: true,
-                loading: false
-              }
+              ...msg,
+              content: error.message || "Something went wrong.",
+              ui: null,
+              animate: true,
+              loading: false
+            }
             : msg
         )
       );
@@ -113,13 +114,13 @@ export default function ChatPage() {
         prev.map((msg) =>
           msg.id === loadingMessageId
             ? {
-                ...msg,
-                content: data.reply,
-                ui: data.ui,
-                meta: data.meta,
-                animate: false,
-                loading: false
-              }
+              ...msg,
+              content: data.reply,
+              ui: data.ui,
+              meta: data.meta,
+              animate: false,
+              loading: false
+            }
             : msg
         )
       );
@@ -128,12 +129,12 @@ export default function ChatPage() {
         prev.map((msg) =>
           msg.id === loadingMessageId
             ? {
-                ...msg,
-                content: error.message || "Failed to load character overview.",
-                ui: null,
-                animate: true,
-                loading: false
-              }
+              ...msg,
+              content: error.message || "Failed to load character overview.",
+              ui: null,
+              animate: true,
+              loading: false
+            }
             : msg
         )
       );
@@ -199,13 +200,13 @@ export default function ChatPage() {
         prev.map((msg) =>
           msg.id === loadingMessageId
             ? {
-                ...msg,
-                content: data.reply,
-                ui: data.ui,
-                meta: data.meta,
-                animate: true,
-                loading: false
-              }
+              ...msg,
+              content: data.reply,
+              ui: data.ui,
+              meta: data.meta,
+              animate: true,
+              loading: false
+            }
             : msg
         )
       );
@@ -214,12 +215,81 @@ export default function ChatPage() {
         prev.map((msg) =>
           msg.id === loadingMessageId
             ? {
-                ...msg,
-                content: error.message || "Failed to load anime action.",
-                ui: null,
-                animate: true,
-                loading: false
-              }
+              ...msg,
+              content: error.message || "Failed to load anime action.",
+              ui: null,
+              animate: true,
+              loading: false
+            }
+            : msg
+        )
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handlePersonSelect(person, targetAction = "overview") {
+    if (!person?.id || loading) return;
+
+    const userText =
+      targetAction === "voice_roles"
+        ? `Show voice roles for ${person.name}`
+        : `Tell me about voice actor ${person.name}`;
+
+    const timestamp = Date.now();
+    const loadingMessageId = `person-action-loading-${timestamp}`;
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `user-person-action-${timestamp}`,
+        role: "user",
+        content: userText,
+        ui: null,
+        animate: false,
+        loading: false
+      },
+      {
+        id: loadingMessageId,
+        role: "assistant",
+        content: "",
+        ui: null,
+        animate: false,
+        loading: true
+      }
+    ]);
+
+    setLoading(true);
+
+    try {
+      const data = await getPersonAction(person.id, targetAction);
+
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === loadingMessageId
+            ? {
+              ...msg,
+              content: data.reply,
+              ui: data.ui,
+              meta: data.meta,
+              animate: true,
+              loading: false
+            }
+            : msg
+        )
+      );
+    } catch (error) {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === loadingMessageId
+            ? {
+              ...msg,
+              content: error.message || "Failed to load person action.",
+              ui: null,
+              animate: true,
+              loading: false
+            }
             : msg
         )
       );
@@ -341,6 +411,7 @@ export default function ChatPage() {
                   message={message}
                   onCharacterSelect={handleCharacterSelect}
                   onAnimeSelect={handleAnimeSelect}
+                  onPersonSelect={handlePersonSelect}
                 />
               ))}
 

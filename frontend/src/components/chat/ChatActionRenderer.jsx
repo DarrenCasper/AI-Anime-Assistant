@@ -7,11 +7,15 @@ import MangaCardGrid from "../manga/MangaCardGrid";
 import MangaOverview from "../manga/MangaOverview";
 import CharacterCardGrid from "../character/CharacterCardGrid";
 import CharacterOverview from "../character/CharacterOverview";
+import PersonOptionGrid from "../person/PersonOptionGrid";
+import PersonOverview from "../person/PersonOverview";
+import PersonVoiceRoles from "../person/PersonVoiceRoles";
 
 export default function ChatActionRenderer({
   ui,
   onCharacterSelect,
-  onAnimeSelect
+  onAnimeSelect,
+  onPersonSelect
 }) {
   if (!ui || ui.type === "none") return null;
 
@@ -67,6 +71,29 @@ export default function ChatActionRenderer({
 
   if (ui.type === "character_overview") {
     return <CharacterOverview character={ui.data?.character} />;
+  }
+
+  if (ui.type === "person_options") {
+    return (
+      <PersonOptionGrid
+        items={ui.data?.items || []}
+        targetAction={ui.data?.targetAction || "overview"}
+        onPersonSelect={onPersonSelect}
+      />
+    );
+  }
+
+  if (ui.type === "person_overview") {
+    return <PersonOverview person={ui.data?.person} />;
+  }
+
+  if (ui.type === "person_voice_roles") {
+    return (
+      <PersonVoiceRoles
+        person={ui.data?.person}
+        roles={ui.data?.roles || []}
+      />
+    );
   }
 
   return null;

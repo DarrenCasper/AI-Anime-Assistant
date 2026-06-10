@@ -19,13 +19,109 @@ import {
   getMangaById,
   getMangaRecommendations,
   filterMangaByTag,
-  sortMangaList
+  sortMangaList,
+  searchPeople,
+  getPersonById,
+  getPersonVoiceRoles
 } from "../Services/JikanService.js";
 import { generateAIAnimeResponse } from "../Services/AIProviderService.js";
 import { buildChatUiAction } from "../Services/uiDecisionService.js";
 import { parseAnimeRequest } from "../Services/queryIntentService.js";
 
 const router = express.Router();
+
+function getPersonSearchText(person = {}) {
+  return normalizeText(
+    [
+      person?.name,
+      person?.givenName,
+      person?.familyName,
+      ...(person?.alternateNames || [])
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+}
+
+function isExactPersonMatch(person, query) {
+  const target = normalizeText(query);
+
+  if (!target || !person) return false;
+
+  return getPersonSearchText(person) === target;
+}
+
+function getRelevantPersonOptions(people = [], query = "", limit = 8) {
+  const safePeople = Array.isArray(people) ? people : [];
+  const tokens = getTokens(query);
+
+  if (tokens.length === 0) {
+    return safePeople.slice(0, limit);
+  }
+
+  const relevant = safePeople.filter((person) => {
+    const searchText = getPersonSearchText(person);
+    return tokens.every((token) => searchText.includes(token));
+  });
+
+  return (relevant.length > 0 ? relevant : safePeople).slice(0, limit);
+}
+
+async function resolvePersonChoiceOrSingle(name, targetAction) {
+  const safeName = String(name ?? "").trim();
+
+  if (!safeName) {
+    return {
+      type: "none",
+      person: null,
+      options: [],
+      targetAction
+    };
+  }
+
+  const people = await searchPeople(safeName, 12);
+  const options = getRelevantPersonOptions(people, safeName, 8);
+
+  if (options.length === 0) {
+    return {
+      type: "none",
+      person: null,
+      options: [],
+      targetAction
+    };
+  }
+
+  const exact = options.find((person) => isExactPersonMatch(person, safeName));
+
+  if (exact) {
+    const detailedPerson = await getPersonById(exact.id);
+
+    return {
+      type: "single",
+      person: detailedPerson || exact,
+      options: [],
+      targetAction
+    };
+  }
+
+  if (options.length >= 2) {
+    return {
+      type: "options",
+      person: null,
+      options,
+      targetAction
+    };
+  }
+
+  const detailedPerson = await getPersonById(options[0].id);
+
+  return {
+    type: "single",
+    person: detailedPerson || options[0],
+    options: [],
+    targetAction
+  };
+}
 
 function getShownAnimeIdsFromMessages(messages, seedAnimeId) {
   const ids = [];
@@ -142,7 +238,7 @@ function getSeasonLabel(seasonIntent) {
 }
 
 function normalizeText(value = "") {
-  return value
+  return String(value ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
@@ -153,6 +249,81 @@ function getTokens(value = "") {
   return normalizeText(value)
     .split(" ")
     .filter(Boolean);
+}
+
+function isPersonMode(mode) {
+  return (
+    mode === "person_options" ||
+    mode === "person_overview" ||
+    mode === "person_voice_roles"
+  );
+}
+
+function getVoiceRoleKey(role) {
+  if (role?.character?.id) {
+    return `character-${role.character.id}`;
+  }
+
+  const characterName = normalizeText(role?.character?.name || "");
+  const animeId = role?.anime?.id || "";
+
+  if (!characterName) return null;
+
+  return `character-name-${characterName}-${animeId}`;
+}
+
+function getShownVoiceRoleKeysFromMessages(messages, personId) {
+  const keys = [];
+
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue;
+    if (msg.meta?.mode !== "person_voice_roles") continue;
+
+    const samePerson =
+      msg.meta?.seedPerson?.id &&
+      String(msg.meta.seedPerson.id) === String(personId);
+
+    if (!samePerson) continue;
+
+    const shownKeys = msg.meta?.shownVoiceRoleKeys || [];
+
+    for (const key of shownKeys) {
+      if (key) keys.push(key);
+    }
+
+    const roles = msg.ui?.data?.roles || [];
+
+    for (const role of roles) {
+      const key = getVoiceRoleKey(role);
+      if (key) keys.push(key);
+    }
+  }
+
+  return [...new Set(keys.map(String))];
+}
+
+function filterExcludedVoiceRoles(roles = [], excludeKeys = []) {
+  const excluded = new Set(excludeKeys.map(String));
+
+  return roles.filter((role) => {
+    const key = getVoiceRoleKey(role);
+    return key && !excluded.has(String(key));
+  });
+}
+
+function findLastPersonVoiceRoleContext(messages) {
+  const latestAssistantMessage = messages.find(
+    (msg) => msg.role === "assistant"
+  );
+
+  if (
+    latestAssistantMessage?.meta?.mode === "person_voice_roles" &&
+    latestAssistantMessage?.meta?.seedPerson?.id
+  ) {
+    return latestAssistantMessage;
+  }
+
+  return null;
 }
 
 function isExactTitleMatch(item, query) {
@@ -492,6 +663,28 @@ function buildFallbackResponse(results, mode = "anime", contextInfo = {}) {
     return "I could not find data for that request right now.";
   }
 
+  if (mode === "person_options") {
+    const names = results.map((person) => person.name).filter(Boolean).join(", ");
+    return `I found several people that could match your request: ${names}. Which one do you mean?`;
+  }
+
+  if (mode === "person_overview") {
+    const person = results[0];
+    return person?.name
+      ? `I found ${person.name}.`
+      : "I found a person result, but I could not generate a detailed response right now.";
+  }
+
+  if (mode === "person_voice_roles") {
+    const titles = results
+      .map((role) => `${role.anime?.title} as ${role.character?.name}`)
+      .filter(Boolean)
+      .join(", ");
+
+    return titles
+      ? `I found these voice roles: ${titles}.`
+      : "I could not find voice role data for that person right now.";
+  }
   if (mode === "characters" && contextInfo.characterDisambiguation) {
     const names = results
       .map((character) => character.name)
@@ -800,6 +993,10 @@ router.post("/", async (req, res) => {
     let seedManga = null;
     let seedTag = parsed.tag || null;
     let seedCharacter = null;
+    let seedPerson = null;
+    let seedPersonData = null;
+    let personName = parsed.personName || null;
+    let shownVoiceRoleKeys = [];
 
     let seasonIntent = parsed.seasonIntent || null;
     let seasonLabel = getSeasonLabel(seasonIntent);
@@ -818,7 +1015,81 @@ router.post("/", async (req, res) => {
     let tagFilterMatched = null;
     let targetAction = null;
 
-    if (isMangaRequest) {
+    const explicitMediaType = getExplicitMediaTypeFromMessage(cleanMessage);
+
+    const lastPersonVoiceRoleMessage =
+      parsed.wantsAnother && !explicitMediaType
+        ? findLastPersonVoiceRoleContext(recentMessages)
+        : null;
+
+    if (lastPersonVoiceRoleMessage?.meta?.seedPerson?.id) {
+      mode = "person_voice_roles";
+      targetAction = "voice_roles";
+
+      seedPerson = lastPersonVoiceRoleMessage.meta.seedPerson;
+      seedPersonData = lastPersonVoiceRoleMessage.meta.seedPersonData || seedPerson;
+      personName = seedPerson.name;
+
+      const excludeKeys = getShownVoiceRoleKeysFromMessages(
+        recentMessages,
+        seedPerson.id
+      );
+
+      const allRoles = await getPersonVoiceRoles(seedPerson.id, 60);
+
+      results = filterExcludedVoiceRoles(allRoles, excludeKeys).slice(0, 20);
+
+      if (results.length === 0) {
+        results = allRoles.slice(0, 20);
+      }
+
+      shownVoiceRoleKeys = results.map(getVoiceRoleKey).filter(Boolean);
+    } else if (parsed.intent === "person_overview") {
+      mode = "person_overview";
+      targetAction = "overview";
+
+      const resolvedPerson = await resolvePersonChoiceOrSingle(
+        personName || cleanMessage,
+        "overview"
+      );
+
+      if (resolvedPerson.type === "options") {
+        mode = "person_options";
+        results = resolvedPerson.options;
+      } else if (resolvedPerson.type === "single") {
+        seedPersonData = resolvedPerson.person;
+        seedPerson = {
+          id: resolvedPerson.person.id,
+          name: resolvedPerson.person.name
+        };
+        results = [resolvedPerson.person];
+      } else {
+        results = [];
+      }
+    } else if (parsed.intent === "person_voice_roles") {
+      mode = "person_voice_roles";
+      targetAction = "voice_roles";
+
+      const resolvedPerson = await resolvePersonChoiceOrSingle(
+        personName || cleanMessage,
+        "voice_roles"
+      );
+
+      if (resolvedPerson.type === "options") {
+        mode = "person_options";
+        results = resolvedPerson.options;
+      } else if (resolvedPerson.type === "single") {
+        seedPersonData = resolvedPerson.person;
+        seedPerson = {
+          id: resolvedPerson.person.id,
+          name: resolvedPerson.person.name
+        };
+        results = await getPersonVoiceRoles(resolvedPerson.person.id, 20);
+        shownVoiceRoleKeys = results.map(getVoiceRoleKey).filter(Boolean);
+      } else {
+        results = [];
+      }
+    } else if (isMangaRequest) {
       if (parsed.intent === "manga_overview" || parsed.intent === "overview") {
         mode = "manga_overview";
 
@@ -1339,7 +1610,10 @@ router.post("/", async (req, res) => {
       seasonLabel,
       tagFilterMatched,
       parsed,
-      resultCount: results.length
+      resultCount: results.length,
+      personName,
+      seedPerson,
+      seedPersonData,
     };
 
     let assistantText;
@@ -1369,8 +1643,9 @@ router.post("/", async (req, res) => {
     const ui = buildChatUiAction(cleanMessage, results, contextInfo);
 
     const characterMode = isCharacterMode(mode);
-    const mangaMode = !characterMode && mediaType === "manga";
-    const animeMode = !characterMode && mediaType !== "manga";
+    const personMode = isPersonMode(mode);
+    const mangaMode = !characterMode && !personMode && mediaType === "manga";
+    const animeMode = !characterMode && !personMode && mediaType !== "manga";
 
     const assistantMeta = {
       ...contextInfo,
@@ -1378,7 +1653,14 @@ router.post("/", async (req, res) => {
       shownMangaIds: mangaMode ? results.map((item) => item.id) : [],
       shownCharacterIds: characterMode ? results.map((item) => item.id) : [],
       excludedAnimeIds: animeMode ? excludeIds : [],
-      excludedMangaIds: mangaMode ? excludeIds : []
+      excludedMangaIds: mangaMode ? excludeIds : [],
+      shownPersonIds: personMode && seedPerson?.id ? [seedPerson.id] : [],
+      shownVoiceRoleKeys:
+        mode === "person_voice_roles"
+          ? shownVoiceRoleKeys.length > 0
+            ? shownVoiceRoleKeys
+            : results.map(getVoiceRoleKey).filter(Boolean)
+          : [],
     };
 
     const assistantMessage = await ChatMessage.create({
@@ -1646,6 +1928,121 @@ router.post("/anime-action", async (req, res) => {
 
     res.status(500).json({
       error: error.message || "Failed to run anime action"
+    });
+  }
+});
+
+router.post("/person-action", async (req, res) => {
+  try {
+    const { personId, action } = req.body;
+
+    if (!personId) {
+      return res.status(400).json({
+        error: "personId is required"
+      });
+    }
+
+    if (!["overview", "voice_roles"].includes(action)) {
+      return res.status(400).json({
+        error: "Valid action is required: overview or voice_roles"
+      });
+    }
+
+    const person = await getPersonById(personId);
+
+    if (!person) {
+      return res.status(404).json({
+        error: "Person not found"
+      });
+    }
+
+    let mode = "person_overview";
+    let results = [person];
+
+    if (action === "voice_roles") {
+      mode = "person_voice_roles";
+      results = await getPersonVoiceRoles(person.id, 20);
+    }
+
+    const provider = process.env.AI_PROVIDER || "gemini";
+
+    const contextInfo = {
+      source: `${provider}+jikan`,
+      mode,
+      mediaType: "anime",
+      targetAction: action,
+      personName: person.name,
+      seedPerson: {
+        id: person.id,
+        name: person.name
+      },
+      seedPersonData: person,
+      resultCount: results.length
+    };
+
+    let assistantText;
+
+    try {
+      assistantText = await generateAIAnimeResponse(
+        action === "voice_roles"
+          ? `Show voice roles for ${person.name}`
+          : `Tell me about voice actor ${person.name}`,
+        results,
+        "",
+        contextInfo
+      );
+    } catch (error) {
+      console.error("AI provider error:", error.message);
+
+      if (!isAiLimitError(error)) {
+        throw error;
+      }
+
+      assistantText = buildFallbackResponse(results, mode, contextInfo);
+    }
+
+    if (!assistantText || !assistantText.trim()) {
+      assistantText = buildFallbackResponse(results, mode, contextInfo);
+    }
+
+    const ui = buildChatUiAction(
+      action === "voice_roles"
+        ? `Show voice roles for ${person.name}`
+        : `Tell me about voice actor ${person.name}`,
+      results,
+      contextInfo
+    );
+
+    const shownVoiceRoleKeys =
+      mode === "person_voice_roles"
+        ? results.map(getVoiceRoleKey).filter(Boolean)
+        : [];
+
+    const assistantMessage = await ChatMessage.create({
+      role: "assistant",
+      content: assistantText,
+      source: contextInfo.source,
+      ui,
+      meta: {
+        ...contextInfo,
+        shownPersonIds: [person.id],
+        shownVoiceRoleKeys,
+        shownAnimeIds: [],
+        shownMangaIds: [],
+        shownCharacterIds: []
+      }
+    });
+
+    res.json({
+      reply: assistantMessage.content,
+      ui,
+      meta: assistantMessage.meta
+    });
+  } catch (error) {
+    console.error("Person action route error:", error.message);
+
+    res.status(500).json({
+      error: error.message || "Failed to run person action"
     });
   }
 });

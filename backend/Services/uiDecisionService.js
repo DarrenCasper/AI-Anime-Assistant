@@ -10,6 +10,35 @@ export function buildChatUiAction(userMessage, results, contextInfo = {}) {
 
   const isManga = contextInfo.mediaType === "manga";
 
+  if (contextInfo.mode === "person_options") {
+    return {
+      type: "person_options",
+      data: {
+        items: results,
+        targetAction: contextInfo.targetAction || "overview"
+      }
+    };
+  }
+
+  if (contextInfo.mode === "person_overview") {
+    return {
+      type: "person_overview",
+      data: {
+        person: results[0]
+      }
+    };
+  }
+
+  if (contextInfo.mode === "person_voice_roles") {
+    return {
+      type: "person_voice_roles",
+      data: {
+        person: contextInfo.seedPersonData || contextInfo.seedPerson || null,
+        roles: results
+      }
+    };
+  }
+
   if (contextInfo.mode === "character_overview") {
     return {
       type: "character_overview",
@@ -30,14 +59,14 @@ export function buildChatUiAction(userMessage, results, contextInfo = {}) {
     };
   }
 
-  if(contextInfo.mode === "anime_options"){
-    return{
+  if (contextInfo.mode === "anime_options") {
+    return {
       type: "anime_options",
       data: {
         items: results,
-        targetAction: contextInfo.targetAction || null
+        targetAction: contextInfo.targetAction || "overview"
       }
-    }
+    };
   }
 
   if (contextInfo.mode === "anime_trailer") {
